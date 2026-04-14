@@ -177,7 +177,7 @@
 </div>
 </section>
 
-<!-- Step 3: Server Selection (Скрыт по умолчанию) -->
+<!-- Step 3: Server Selection -->
 <section id="server-section" class="px-6 py-12 hidden">
 <h2 class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Выберите сервер</h2>
 <div id="server-list" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
@@ -232,7 +232,7 @@
 </div>
 </section>
 
-<!-- Feature Section: Bento Style -->
+<!-- Feature Section -->
 <section class="px-6 py-12">
 <h2 class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Современные протоколы</h2>
 <div class="grid grid-cols-1 gap-6">
@@ -307,10 +307,11 @@ let pendingEmail = '';
 let sessionToken = localStorage.getItem('session_token');
 let selectedServer = null;
 let createToken = '9afd436e-064e';
+const API_URL = 'https://susan-affecting-persons-bath.trycloudflare.com';
 
 // Проверка сессии
 if (sessionToken) {
-    fetch('/api/verify-session', {
+    fetch(`${API_URL}/api/verify-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: sessionToken })
@@ -368,7 +369,7 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
     btn.textContent = 'Отправка...';
     
     try {
-        const res = await fetch('/api/send-code', {
+        const res = await fetch(`${API_URL}/api/send-code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email })
@@ -387,7 +388,6 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
         document.getElementById('email-section').classList.add('hidden');
         document.getElementById('otp-section').classList.remove('hidden');
         
-        // Clear OTP inputs
         digits.forEach(d => d.value = '');
         digits[0].focus();
         
@@ -417,7 +417,7 @@ document.getElementById('verify-code-btn')?.addEventListener('click', async () =
     btn.textContent = 'Проверка...';
     
     try {
-        const res = await fetch('/api/verify-code', {
+        const res = await fetch(`${API_URL}/api/verify-code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: pendingEmail, code })
@@ -457,7 +457,7 @@ document.getElementById('resend-code-btn')?.addEventListener('click', async () =
     btn.textContent = 'Отправка...';
     
     try {
-        const res = await fetch('/api/send-code', {
+        const res = await fetch(`${API_URL}/api/send-code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: pendingEmail })
@@ -488,7 +488,7 @@ document.getElementById('logout-btn')?.addEventListener('click', () => {
 });
 
 // Load servers
-fetch('/api/servers')
+fetch(`${API_URL}/api/servers`)
     .then(r => r.json())
     .then(servers => {
         const container = document.getElementById('server-list');
@@ -544,7 +544,7 @@ async function createKey() {
     btn.textContent = 'Генерация...';
     
     try {
-        const res = await fetch('/api/create', {
+        const res = await fetch(`${API_URL}/api/create`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ server: selectedServer, username, token: createToken })
