@@ -1,0 +1,22 @@
+# Secrets and runtime data — never commit
+secrets.json
+sessions.json
+users.json
+verification_codes.json
+chats.json
+settings.txt
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
