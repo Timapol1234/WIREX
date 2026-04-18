@@ -221,7 +221,7 @@
 <button id="server-back-btn" class="mb-6 bg-surface-container-high text-on-surface-variant hover:text-primary px-4 py-2 rounded-full text-sm inline-flex items-center gap-1 active:scale-95 transition-all">
 <span class="material-symbols-outlined text-base">arrow_back</span> К моим ключам
 </button>
-<h2 class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Выберите сервер</h2>
+<h2 id="server-section-title" class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Выберите сервер</h2>
 <div id="server-list" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
 
 <div class="bg-surface-container p-8 rounded-xl">
@@ -377,8 +377,10 @@ PROTECTED
 <button id="payment-close-btn" class="absolute top-4 right-4 text-on-surface-variant hover:text-primary" aria-label="Закрыть">
 <span class="material-symbols-outlined">close</span>
 </button>
-<h2 class="font-headline text-2xl font-bold mb-2">Оформить подписку</h2>
-<p class="text-on-surface-variant text-sm mb-6">Для создания ключа и работы VPN нужна активная подписка. Оплата ручная — после перевода нажмите «Я оплатил», админ подтвердит.</p>
+<h2 id="payment-modal-title" class="font-headline text-2xl font-bold mb-2">Оформить подписку</h2>
+<p id="payment-modal-subtitle" class="text-on-surface-variant text-sm mb-6">Для создания ключа и работы VPN нужна активная подписка. Оплата ручная — после перевода нажмите «Я оплатил», админ подтвердит.</p>
+
+<div id="renewal-preview" class="hidden bg-surface-container-high border border-primary/30 rounded-xl p-4 mb-4 text-sm"></div>
 
 <label class="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">Выберите тариф</label>
 <div id="tariff-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2 mb-6">
@@ -393,7 +395,7 @@ PROTECTED
 
 <div id="payment-error" class="text-error text-sm mb-3 hidden"></div>
 <button id="i-paid-btn" class="primary-gradient text-on-primary py-3 rounded-full font-bold w-full active:scale-95 transition-all mb-4 disabled:opacity-50">
-Я оплатил — отправить на проверку
+<span id="i-paid-btn-label">Я оплатил — отправить на проверку</span>
 </button>
 
 <div class="border-t border-outline-variant/20 pt-5">
@@ -715,6 +717,8 @@ let pendingRequest = null;
 let tariffs = [];
 let paymentInfo = null;
 let selectedTariffId = null;
+let replacing = false;  // true — следующий createKey() заменит существующий ключ
+let suggestedUsername = '';
 
 function hideAllSections() {
     ['email-section','otp-section','my-keys-section','server-section','result-section']
@@ -734,15 +738,42 @@ function showEmailSection() {
     setMarketingVisible(true);
 }
 
-function showServerSection() {
+async function fetchSuggestedUsername() {
+    if (suggestedUsername) return suggestedUsername;
+    try {
+        const res = await fetch(`${API_URL}/api/suggest-username`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken })
+        });
+        const data = await res.json();
+        if (res.ok && data.username) suggestedUsername = data.username;
+    } catch (e) { /* ignore */ }
+    return suggestedUsername;
+}
+
+async function showServerSection({ replace = false } = {}) {
     const subActive = !!(currentSub && currentSub.active);
     if (!subActive) {
         openPaymentModal();
         return;
     }
+    replacing = !!replace;
     hideAllSections();
     document.getElementById('server-section').classList.remove('hidden');
     setMarketingVisible(false);
+
+    // Заголовок и кнопка меняются в зависимости от режима
+    const title = document.getElementById('server-section-title');
+    const btn = document.getElementById('create-key-btn');
+    if (title) title.textContent = replacing ? 'Выберите новый сервер' : 'Выберите сервер';
+    if (btn) btn.textContent = replacing ? 'Заменить ключ' : 'Сгенерировать ключ';
+
+    // Подставить имя
+    const name = await fetchSuggestedUsername();
+    const inp = document.getElementById('username');
+    if (inp && !inp.value) inp.value = name || '';
+
     window.scrollTo({ top: document.getElementById('server-section').offsetTop - 80, behavior: 'smooth' });
 }
 
@@ -773,6 +804,7 @@ function fmtDate(iso) {
 }
 
 async function loadMyKeys() {
+    replacing = false;  // выход из flow замены, если юзер вернулся
     hideAllSections();
     setMarketingVisible(false);
     document.getElementById('my-keys-section').classList.remove('hidden');
@@ -942,6 +974,7 @@ function renderTariffGrid() {
         btn.onclick = () => {
             selectedTariffId = btn.dataset.tariff;
             renderTariffGrid();
+            updateRenewalPreview();
         };
     });
 }
@@ -963,11 +996,62 @@ function renderPaymentInfo() {
     noteEl.textContent = paymentInfo.note || '';
 }
 
+function updateRenewalPreview() {
+    // Оформляем заголовки/кнопку и показываем превью продления, если подписка активна.
+    const isRenewal = !!(currentSub && currentSub.active && currentSub.plan !== 'unlimited');
+    const isUnlimited = !!(currentSub && currentSub.active && currentSub.plan === 'unlimited');
+
+    const title = document.getElementById('payment-modal-title');
+    const subtitle = document.getElementById('payment-modal-subtitle');
+    const btnLabel = document.getElementById('i-paid-btn-label');
+    const preview = document.getElementById('renewal-preview');
+
+    if (isUnlimited) {
+        // На безлимите подписку продлять бессмысленно — но модалка может открыться через промокод.
+        if (title) title.textContent = 'Промокод или апгрейд';
+        if (subtitle) subtitle.textContent = 'У вас безлимитный доступ. Тариф можно не выбирать — используйте промокод.';
+        if (btnLabel) btnLabel.textContent = 'Я оплатил — отправить на проверку';
+        if (preview) preview.classList.add('hidden');
+        return;
+    }
+
+    if (isRenewal) {
+        if (title) title.textContent = 'Продлить подписку';
+        if (subtitle) subtitle.textContent = 'Оставшиеся дни сохраняются — новый срок прибавится к текущему.';
+        if (btnLabel) btnLabel.textContent = 'Я оплатил — продлить';
+
+        if (preview) {
+            const curr = new Date(currentSub.expires_at);
+            const selectedTariff = tariffs.find(t => t.id === selectedTariffId);
+            const daysLeft = Math.max(0, Math.ceil((curr - new Date()) / 86400000));
+            if (selectedTariff) {
+                const newExp = new Date(curr.getTime() + selectedTariff.days * 86400000);
+                preview.innerHTML = `
+                    <div class="flex flex-col gap-1">
+                        <div class="text-on-surface-variant">Сейчас подписка до <strong class="text-on-surface">${curr.toLocaleDateString('ru-RU')}</strong> (осталось ${daysLeft} дн.)</div>
+                        <div class="text-on-surface-variant">После продления — <strong class="text-primary">${newExp.toLocaleDateString('ru-RU')}</strong> (+${selectedTariff.days} дн.)</div>
+                    </div>`;
+            } else {
+                preview.innerHTML = `<div class="text-on-surface-variant">Сейчас подписка до <strong class="text-on-surface">${curr.toLocaleDateString('ru-RU')}</strong> (осталось ${daysLeft} дн.). Выберите тариф для продления.</div>`;
+            }
+            preview.classList.remove('hidden');
+        }
+        return;
+    }
+
+    // Нет активной подписки — обычное «оформление».
+    if (title) title.textContent = 'Оформить подписку';
+    if (subtitle) subtitle.textContent = 'Для создания ключа и работы VPN нужна активная подписка. Оплата ручная — после перевода нажмите «Я оплатил», админ подтвердит.';
+    if (btnLabel) btnLabel.textContent = 'Я оплатил — отправить на проверку';
+    if (preview) preview.classList.add('hidden');
+}
+
 async function openPaymentModal() {
     await ensureTariffs();
     if (!selectedTariffId && tariffs.length) selectedTariffId = tariffs[0].id;
     renderTariffGrid();
     renderPaymentInfo();
+    updateRenewalPreview();
     document.getElementById('payment-error').classList.add('hidden');
     document.getElementById('promo-msg').classList.add('hidden');
     document.getElementById('promo-input').value = '';
@@ -1045,6 +1129,10 @@ async function redeemPromo() {
 function renderMyKeys() {
     const list = document.getElementById('my-keys-list');
     const empty = document.getElementById('my-keys-empty');
+    const newBtn = document.getElementById('new-key-btn');
+
+    // Подписка = 1 ключ, поэтому при наличии ключа кнопка "Новый ключ" прячется.
+    if (newBtn) newBtn.classList.toggle('hidden', myKeys.length > 0);
 
     if (!myKeys.length) {
         empty.classList.remove('hidden');
@@ -1062,12 +1150,15 @@ function renderMyKeys() {
                     <div class="font-headline font-bold text-lg break-all">${escapeHtml(k.username)}</div>
                     <div class="text-xs text-on-surface-variant mt-1">${escapeHtml(k.server_name)} · ${fmtDate(k.created)}</div>
                 </div>
-                <button class="text-error text-xs hover:underline flex items-center gap-1" data-del="${i}">
+                <button class="text-error text-xs hover:underline flex items-center gap-1" data-del="${i}" title="Удалить ключ">
                     <span class="material-symbols-outlined text-base">delete</span> Удалить
                 </button>
             </div>
             <button class="primary-gradient text-on-primary py-2.5 rounded-full font-semibold text-sm active:scale-95 transition-all mb-2" data-show="${i}">
                 Показать QR и ссылки
+            </button>
+            <button class="bg-surface-container-high text-on-surface py-2 rounded-full font-semibold text-sm active:scale-95 transition-all mb-2 flex items-center justify-center gap-1" data-replace="${i}" title="Удалит текущий ключ и создаст новый на выбранном сервере">
+                <span class="material-symbols-outlined text-base">swap_horiz</span> Сменить ключ / сервер
             </button>
             <div class="text-xs text-on-surface-variant font-mono opacity-60 truncate mt-1" title="${escapeHtml(k.sub_url)}">${escapeHtml(k.sub_url)}</div>
         </div>
@@ -1078,6 +1169,12 @@ function renderMyKeys() {
     });
     list.querySelectorAll('[data-del]').forEach(btn => {
         btn.onclick = () => deleteMyKey(myKeys[+btn.dataset.del].username);
+    });
+    list.querySelectorAll('[data-replace]').forEach(btn => {
+        btn.onclick = () => {
+            if (!confirm('Создать новый ключ? Старый ключ перестанет работать сразу после замены.')) return;
+            showServerSection({ replace: true });
+        };
     });
 }
 
@@ -1104,8 +1201,9 @@ async function deleteMyKey(username) {
 
 async function createKey() {
     const rawName = document.getElementById('username').value.trim();
-    const username = rawName || (userEmail || pendingEmail).split('@')[0].replace(/[^a-zA-Z0-9_\-]/g, '');
+    const username = rawName || suggestedUsername || (userEmail || pendingEmail).split('@')[0].replace(/[^a-zA-Z0-9_\-]/g, '');
     const errorEl = document.getElementById('create-error');
+    const isReplace = replacing;
 
     if (!selectedServer) {
         errorEl.textContent = 'Выберите сервер';
@@ -1122,15 +1220,17 @@ async function createKey() {
     errorEl.classList.add('hidden');
     const btn = document.getElementById('create-key-btn');
     btn.disabled = true;
-    btn.textContent = 'Генерация...';
+    btn.textContent = isReplace ? 'Замена...' : 'Генерация...';
+
+    const endpoint = isReplace ? '/api/my-keys/replace' : '/api/create';
 
     try {
-        const res = await fetch(`${API_URL}/api/create`, {
+        const res = await fetch(`${API_URL}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ server: selectedServer, username, token: sessionToken })
         });
-        
+
         const data = await res.json();
 
         if (res.status === 401) {
@@ -1150,6 +1250,13 @@ async function createKey() {
             return;
         }
 
+        if (res.status === 409 || data.code === 'key_exists') {
+            errorEl.textContent = 'У вас уже есть ключ. Используйте «Сменить ключ».';
+            errorEl.classList.remove('hidden');
+            loadMyKeys();
+            return;
+        }
+
         if (!res.ok) {
             errorEl.textContent = data.error;
             errorEl.classList.remove('hidden');
@@ -1157,13 +1264,14 @@ async function createKey() {
         }
 
         document.getElementById('username').value = '';
-        showResult(data, 'Ключ успешно создан!');
+        replacing = false;
+        showResult(data, isReplace ? 'Ключ заменён' : 'Ключ успешно создан!');
     } catch (e) {
         errorEl.textContent = 'Ошибка соединения с сервером';
         errorEl.classList.remove('hidden');
     } finally {
         btn.disabled = false;
-        btn.textContent = 'Сгенерировать ключ';
+        btn.textContent = isReplace ? 'Заменить ключ' : 'Сгенерировать ключ';
     }
 }
 

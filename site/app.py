@@ -583,13 +583,27 @@ def query_xray_stats(server_key):
             bucket["down"] = value
     return result
 
+def sub_slug(username, user_uuid):
+    """Имя файла подписки — <username>_<uuid8>. Уникально даже при одинаковых username."""
+    return f"{username.lower()}_{user_uuid.split('-')[0]}"
+
+
 def update_subscription(user_uuid, server_key, username):
     os.makedirs(SUB_DIR, exist_ok=True)
     url = build_vless_url(user_uuid, server_key, f"VPN-{username}")
     encoded = base64.b64encode(url.encode()).decode()
-    filepath = os.path.join(SUB_DIR, username.lower())
+    filepath = os.path.join(SUB_DIR, sub_slug(username, user_uuid))
     with open(filepath, "w") as f:
         f.write(encoded)
+
+
+def suggest_username_for_email(email):
+    """Предложить валидный username по email. Использует префикс до @, чистит до [a-zA-Z0-9_-]."""
+    local = (email or "").split("@", 1)[0]
+    cleaned = re.sub(r"[^a-zA-Z0-9_\-]", "", local)
+    if len(cleaned) < 2:
+        cleaned = f"user{secrets.token_hex(3)}"
+    return cleaned[:32]
 
 @app.route("/")
 def index():
@@ -613,7 +627,7 @@ def build_key_data(user):
     username = user["username"]
     s = SERVERS[server_key]
     vless_url = build_vless_url(user["uuid"], server_key, f"VPN-{username}")
-    sub_url = f"http://{SUB_HOST}/sub/{username.lower()}"
+    sub_url = f"http://{SUB_HOST}/sub/{sub_slug(username, user['uuid'])}"
     return {
         "username": username,
         "server": server_key,
@@ -643,12 +657,15 @@ def create_key():
     if server_key not in SERVERS:
         return jsonify({"error": "Сервер не найден"}), 400
 
-    if not username or not re.match(r"^[a-zA-Z0-9_\-]{2,32}$", username):
+    if not username:
+        username = suggest_username_for_email(session["email"])
+    if not re.match(r"^[a-zA-Z0-9_\-]{2,32}$", username):
         return jsonify({"error": "Имя: 2–32 символа, только латиница/цифры/_-"}), 400
 
     users = load_users()
-    if any(u["username"].lower() == username.lower() for u in users):
-        return jsonify({"error": "Имя уже занято, выберите другое"}), 400
+    email_lc = session["email"].lower()
+    if any((u.get("email") or "").lower() == email_lc for u in users):
+        return jsonify({"error": "У вас уже есть ключ. Удалите его или замените, чтобы создать новый.", "code": "key_exists"}), 409
 
     user_uuid = str(uuid.uuid4())
 
@@ -713,14 +730,87 @@ def delete_my_key():
     except Exception as e:
         return jsonify({"error": f"Ошибка Xray: {str(e)}"}), 500
 
-    sub_path = os.path.join(SUB_DIR, username.lower())
+    sub_path = os.path.join(SUB_DIR, sub_slug(user["username"], user["uuid"]))
     if os.path.exists(sub_path):
         os.remove(sub_path)
 
-    users = [u for u in users if u["username"].lower() != username.lower()]
+    users = [u for u in users if u["uuid"] != user["uuid"]]
     save_users(users)
 
     return jsonify({"ok": True})
+
+
+@app.route("/api/my-keys/replace", methods=["POST"])
+def replace_my_key():
+    """Заменяет текущий ключ юзера на новый (другой сервер/имя). Удаляет старый и создаёт новый в одной транзакции."""
+    data = request.json or {}
+    token = data.get("token", "")
+    server_key = data.get("server")
+    new_username = (data.get("username") or "").strip()
+
+    session = get_session(token)
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+
+    if not is_subscribed(session["email"]):
+        return jsonify({"error": "Нужна активная подписка", "code": "subscription_required"}), 402
+
+    if server_key not in SERVERS:
+        return jsonify({"error": "Сервер не найден"}), 400
+
+    if not new_username:
+        new_username = suggest_username_for_email(session["email"])
+    if not re.match(r"^[a-zA-Z0-9_\-]{2,32}$", new_username):
+        return jsonify({"error": "Имя: 2–32 символа, только латиница/цифры/_-"}), 400
+
+    email_lc = session["email"].lower()
+    users = load_users()
+    old = next((u for u in users if (u.get("email") or "").lower() == email_lc), None)
+
+    if old:
+        try:
+            remove_from_xray(old["uuid"], old["server"])
+        except Exception as e:
+            return jsonify({"error": f"Ошибка Xray (удаление старого): {str(e)}"}), 500
+        old_sub_path = os.path.join(SUB_DIR, sub_slug(old["username"], old["uuid"]))
+        if os.path.exists(old_sub_path):
+            os.remove(old_sub_path)
+        users = [u for u in users if u["uuid"] != old["uuid"]]
+
+    new_uuid = str(uuid.uuid4())
+    try:
+        add_to_xray(new_uuid, server_key, new_username)
+    except Exception as e:
+        save_users(users)
+        return jsonify({"error": f"Ошибка Xray (создание нового): {str(e)}"}), 500
+
+    try:
+        update_subscription(new_uuid, server_key, new_username)
+    except Exception as e:
+        save_users(users)
+        return jsonify({"error": f"Ошибка подписки: {str(e)}"}), 500
+
+    entry = {
+        "username": new_username,
+        "uuid": new_uuid,
+        "server": server_key,
+        "email": session["email"],
+        "created": datetime.now().isoformat(),
+        "in_xray": True,
+    }
+    users.append(entry)
+    save_users(users)
+    return jsonify(build_key_data(entry))
+
+
+@app.route("/api/suggest-username", methods=["POST"])
+def api_suggest_username():
+    data = request.json or {}
+    session = get_session(data.get("token", ""))
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+    return jsonify({"username": suggest_username_for_email(session["email"])})
+
 
 @app.route("/api/tariffs", methods=["GET"])
 def api_tariffs():
@@ -1092,7 +1182,7 @@ def _sync_user_xray_state(email):
         elif not active and in_xray:
             try:
                 remove_from_xray(u["uuid"], server_key)
-                sub_path = os.path.join(SUB_DIR, username.lower())
+                sub_path = os.path.join(SUB_DIR, sub_slug(username, u["uuid"]))
                 if os.path.exists(sub_path):
                     os.remove(sub_path)
                 u["in_xray"] = False
@@ -1242,11 +1332,11 @@ def delete_user():
     except Exception as e:
         return jsonify({"error": f"Ошибка удаления из Xray: {str(e)}"}), 500
 
-    sub_path = os.path.join(SUB_DIR, username.lower())
+    sub_path = os.path.join(SUB_DIR, sub_slug(user["username"], user["uuid"]))
     if os.path.exists(sub_path):
         os.remove(sub_path)
 
-    users = [u for u in users if u["username"].lower() != username.lower()]
+    users = [u for u in users if u["uuid"] != user["uuid"]]
     save_users(users)
 
     return jsonify({"ok": True})
