@@ -184,9 +184,37 @@
 </div>
 </section>
 
+<!-- My Keys -->
+<section id="my-keys-section" class="px-6 py-12 hidden">
+<div class="max-w-5xl mx-auto">
+<div class="flex items-center justify-between mb-8 gap-4">
+<h2 class="font-headline text-3xl font-bold pl-2 border-l-4 border-primary">Мои ключи</h2>
+<button id="new-key-btn" class="primary-gradient text-on-primary px-5 py-2 rounded-full font-bold text-sm active:scale-95 transition-all whitespace-nowrap">+ Новый ключ</button>
+</div>
+
+<div id="my-keys-loading" class="text-center py-16 text-on-surface-variant">Загрузка...</div>
+
+<div id="my-keys-empty" class="hidden text-center py-16">
+<div class="inline-block p-6 rounded-full bg-surface-container-high mb-4">
+<span class="material-symbols-outlined text-on-surface-variant text-6xl">key_off</span>
+</div>
+<h3 class="font-headline text-xl font-bold mb-2">У вас пока нет ключей</h3>
+<p class="text-on-surface-variant mb-6">Создайте первый ключ, чтобы подключиться к VPN</p>
+<button id="create-first-btn" class="primary-gradient text-on-primary px-8 py-3 rounded-full font-bold active:scale-95 transition-all">Создать ключ</button>
+</div>
+
+<div id="my-keys-list" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+</div>
+</section>
+
 <!-- Step 3: Server Selection -->
 <section id="server-section" class="px-6 py-12 hidden">
-<h2 class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Выберите сервер</h2>
+<div class="flex items-center justify-between mb-8 gap-4">
+<h2 class="font-headline text-3xl font-bold pl-2 border-l-4 border-primary">Выберите сервер</h2>
+<button id="server-back-btn" class="text-on-surface-variant text-sm hover:text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-base">arrow_back</span> К моим ключам
+</button>
+</div>
 <div id="server-list" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
 
 <div class="bg-surface-container p-8 rounded-xl">
@@ -235,7 +263,7 @@
 </ol>
 </div>
 
-<button id="reset-btn" class="mt-6 bg-surface-container-high border border-outline-variant/30 text-on-surface py-3 rounded-full font-medium w-full active:scale-95 transition-all">Создать ещё один ключ</button>
+<button id="reset-btn" class="mt-6 bg-surface-container-high border border-outline-variant/30 text-on-surface py-3 rounded-full font-medium w-full active:scale-95 transition-all">К моим ключам</button>
 </div>
 </section>
 
@@ -504,13 +532,12 @@ document.getElementById('verify-code-btn')?.addEventListener('click', async () =
         sessionToken = data.token;
         userEmail = data.email;
 
-        document.getElementById('otp-section').classList.add('hidden');
-        showServerSection();
         document.getElementById('user-email-display').textContent = data.email;
         document.getElementById('user-email-display').classList.remove('hidden');
         document.getElementById('logout-btn').classList.remove('hidden');
-        
+
         showToast('Успешная авторизация!', 'success');
+        loadMyKeys();
         
     } catch (e) {
         errorEl.textContent = 'Ошибка соединения';
@@ -595,21 +622,134 @@ fetch(`${API_URL}/api/servers`)
         }
     });
 
+let myKeys = [];
+
+function hideAllSections() {
+    ['email-section','otp-section','my-keys-section','server-section','result-section']
+        .forEach(id => document.getElementById(id)?.classList.add('hidden'));
+}
+
 function showServerSection() {
+    hideAllSections();
     document.getElementById('server-section').classList.remove('hidden');
-    document.getElementById('result-section').classList.add('hidden');
     window.scrollTo({ top: document.getElementById('server-section').offsetTop - 80, behavior: 'smooth' });
 }
 
-function showResult(data) {
-    document.getElementById('server-section').classList.add('hidden');
+function showResult(data, toastMessage) {
+    hideAllSections();
     document.getElementById('result-section').classList.remove('hidden');
     document.getElementById('qr-img').src = 'data:image/png;base64,' + data.qr;
     document.getElementById('vless-url').textContent = data.vless_url;
     document.getElementById('sub-url').textContent = data.sub_url;
-    document.getElementById('result-info').textContent = `${data.username || pendingEmail} — ${data.server}`;
+    document.getElementById('result-info').textContent = `${data.username} — ${data.server_name || data.server}`;
     window.scrollTo({ top: document.getElementById('result-section').offsetTop - 80, behavior: 'smooth' });
-    showToast('Ключ успешно создан!', 'success');
+    if (toastMessage) showToast(toastMessage, 'success');
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDate(iso) {
+    if (!iso) return '';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+    } catch (e) { return iso; }
+}
+
+async function loadMyKeys() {
+    hideAllSections();
+    document.getElementById('my-keys-section').classList.remove('hidden');
+    document.getElementById('my-keys-loading').classList.remove('hidden');
+    document.getElementById('my-keys-empty').classList.add('hidden');
+    document.getElementById('my-keys-list').classList.add('hidden');
+
+    try {
+        const res = await fetch(`${API_URL}/api/my-keys`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken })
+        });
+
+        if (res.status === 401) {
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_email');
+            location.reload();
+            return;
+        }
+
+        myKeys = await res.json();
+        renderMyKeys();
+    } catch (e) {
+        showToast('Ошибка загрузки ключей', 'error');
+    } finally {
+        document.getElementById('my-keys-loading').classList.add('hidden');
+    }
+
+    window.scrollTo({ top: document.getElementById('my-keys-section').offsetTop - 80, behavior: 'smooth' });
+}
+
+function renderMyKeys() {
+    const list = document.getElementById('my-keys-list');
+    const empty = document.getElementById('my-keys-empty');
+
+    if (!myKeys.length) {
+        empty.classList.remove('hidden');
+        list.classList.add('hidden');
+        return;
+    }
+
+    empty.classList.add('hidden');
+    list.classList.remove('hidden');
+    list.innerHTML = myKeys.map((k, i) => `
+        <div class="bg-surface-container p-6 rounded-xl flex flex-col">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <div class="text-3xl mb-1">${k.server_flag || ''}</div>
+                    <div class="font-headline font-bold text-lg break-all">${escapeHtml(k.username)}</div>
+                    <div class="text-xs text-on-surface-variant mt-1">${escapeHtml(k.server_name)} · ${fmtDate(k.created)}</div>
+                </div>
+                <button class="text-error text-xs hover:underline flex items-center gap-1" data-del="${i}">
+                    <span class="material-symbols-outlined text-base">delete</span> Удалить
+                </button>
+            </div>
+            <button class="primary-gradient text-on-primary py-2.5 rounded-full font-semibold text-sm active:scale-95 transition-all mb-2" data-show="${i}">
+                Показать QR и ссылки
+            </button>
+            <div class="text-xs text-on-surface-variant font-mono opacity-60 truncate mt-1" title="${escapeHtml(k.sub_url)}">${escapeHtml(k.sub_url)}</div>
+        </div>
+    `).join('');
+
+    list.querySelectorAll('[data-show]').forEach(btn => {
+        btn.onclick = () => showResult(myKeys[+btn.dataset.show]);
+    });
+    list.querySelectorAll('[data-del]').forEach(btn => {
+        btn.onclick = () => deleteMyKey(myKeys[+btn.dataset.del].username);
+    });
+}
+
+async function deleteMyKey(username) {
+    if (!confirm(`Удалить ключ "${username}"? Подключение перестанет работать.`)) return;
+
+    try {
+        const res = await fetch(`${API_URL}/api/my-keys/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, username })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showToast('Ключ удалён', 'success');
+            loadMyKeys();
+        } else {
+            showToast(data.error || 'Ошибка удаления', 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка соединения', 'error');
+    }
 }
 
 async function createKey() {
@@ -658,7 +798,8 @@ async function createKey() {
             return;
         }
 
-        showResult(data);
+        document.getElementById('username').value = '';
+        showResult(data, 'Ключ успешно создан!');
     } catch (e) {
         errorEl.textContent = 'Ошибка соединения с сервером';
         errorEl.classList.remove('hidden');
@@ -669,9 +810,7 @@ async function createKey() {
 }
 
 function resetForm() {
-    document.getElementById('username').value = '';
-    document.getElementById('server-section').classList.remove('hidden');
-    document.getElementById('result-section').classList.add('hidden');
+    loadMyKeys();
 }
 
 function copyText(elementId, btn) {
@@ -691,6 +830,8 @@ function copyText(elementId, btn) {
 async function checkSession() {
     if (!sessionToken) return;
 
+    // сразу прячем email-форму — не моргаем при наличии активной сессии
+    document.getElementById('email-section').classList.add('hidden');
     document.getElementById('user-email-display').textContent = 'Проверка...';
     document.getElementById('user-email-display').classList.remove('hidden');
 
@@ -707,21 +848,26 @@ async function checkSession() {
             localStorage.setItem('user_email', data.email);
             document.getElementById('user-email-display').textContent = data.email;
             document.getElementById('logout-btn').classList.remove('hidden');
-            showServerSection();
+            loadMyKeys();
         } else {
             localStorage.removeItem('session_token');
             localStorage.removeItem('user_email');
             sessionToken = null;
             document.getElementById('user-email-display').classList.add('hidden');
+            document.getElementById('email-section').classList.remove('hidden');
         }
     } catch (e) {
         document.getElementById('user-email-display').textContent = userEmail || '';
+        document.getElementById('email-section').classList.remove('hidden');
     }
 }
 checkSession();
 
 document.getElementById('create-key-btn')?.addEventListener('click', createKey);
 document.getElementById('reset-btn')?.addEventListener('click', resetForm);
+document.getElementById('new-key-btn')?.addEventListener('click', showServerSection);
+document.getElementById('create-first-btn')?.addEventListener('click', showServerSection);
+document.getElementById('server-back-btn')?.addEventListener('click', loadMyKeys);
 
 // Enter key handlers
 document.getElementById('login-email')?.addEventListener('keypress', (e) => {

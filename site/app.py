@@ -554,6 +554,25 @@ def get_servers():
         }
     return jsonify(result)
 
+def build_key_data(user):
+    """Собирает всё, что нужно фронту для показа ключа: URL, подписка, QR, мета."""
+    server_key = user["server"]
+    username = user["username"]
+    s = SERVERS[server_key]
+    vless_url = build_vless_url(user["uuid"], server_key, f"VPN-{username}")
+    sub_url = f"http://{SUB_HOST}/sub/{username.lower()}"
+    return {
+        "username": username,
+        "server": server_key,
+        "server_name": s["name"],
+        "server_flag": s["flag"],
+        "created": user.get("created", ""),
+        "vless_url": vless_url,
+        "sub_url": sub_url,
+        "qr": generate_qr_base64(vless_url),
+    }
+
+
 @app.route("/api/create", methods=["POST"])
 def create_key():
     data = request.json
@@ -573,7 +592,7 @@ def create_key():
 
     users = load_users()
     if any(u["username"].lower() == username.lower() for u in users):
-        return jsonify({"error": "Пользователь уже существует"}), 400
+        return jsonify({"error": "Имя уже занято, выберите другое"}), 400
 
     user_uuid = str(uuid.uuid4())
 
@@ -587,10 +606,6 @@ def create_key():
     except Exception as e:
         return jsonify({"error": f"Ошибка подписки: {str(e)}"}), 500
 
-    vless_url = build_vless_url(user_uuid, server_key, f"VPN-{username}")
-    sub_url = f"http://{SUB_HOST}/sub/{username.lower()}"
-    qr_b64 = generate_qr_base64(vless_url)
-
     user_entry = {
         "username": username,
         "uuid": user_uuid,
@@ -601,13 +616,54 @@ def create_key():
     users.append(user_entry)
     save_users(users)
 
-    return jsonify({
-        "vless_url": vless_url,
-        "sub_url": sub_url,
-        "qr": qr_b64,
-        "username": username,
-        "server": SERVERS[server_key]["name"]
-    })
+    return jsonify(build_key_data(user_entry))
+
+
+@app.route("/api/my-keys", methods=["POST"])
+def my_keys():
+    data = request.json or {}
+    token = data.get("token", "")
+    session = get_session(token)
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+
+    email = session["email"]
+    users = load_users()
+    mine = [u for u in users if u.get("email") == email]
+    return jsonify([build_key_data(u) for u in mine])
+
+
+@app.route("/api/my-keys/delete", methods=["POST"])
+def delete_my_key():
+    data = request.json or {}
+    token = data.get("token", "")
+    username = data.get("username", "")
+
+    session = get_session(token)
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+
+    users = load_users()
+    user = next((u for u in users if u["username"].lower() == username.lower()), None)
+    if not user:
+        return jsonify({"error": "Ключ не найден"}), 404
+
+    if user.get("email") != session["email"]:
+        return jsonify({"error": "Это не ваш ключ"}), 403
+
+    try:
+        remove_from_xray(user["uuid"], user["server"])
+    except Exception as e:
+        return jsonify({"error": f"Ошибка Xray: {str(e)}"}), 500
+
+    sub_path = os.path.join(SUB_DIR, username.lower())
+    if os.path.exists(sub_path):
+        os.remove(sub_path)
+
+    users = [u for u in users if u["username"].lower() != username.lower()]
+    save_users(users)
+
+    return jsonify({"ok": True})
 
 def _is_admin(data):
     return bool(ADMIN_PASSWORD) and data.get("password") == ADMIN_PASSWORD
