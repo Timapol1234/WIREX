@@ -179,7 +179,10 @@
 </div>
 <div id="otp-error" class="text-error text-sm mb-4 hidden"></div>
 <button id="verify-code-btn" class="primary-gradient text-on-primary py-4 rounded-full font-bold text-lg w-full active:scale-95 transition-all">Подтвердить</button>
-<button id="resend-code-btn" class="mt-4 text-primary text-sm hover:underline">Отправить код повторно</button>
+<div class="flex items-center justify-between mt-4 text-sm">
+<button id="change-email-btn" class="text-on-surface-variant hover:text-primary">← Изменить email</button>
+<button id="resend-code-btn" class="text-primary hover:underline">Отправить код повторно</button>
+</div>
 </div>
 </div>
 </section>
@@ -221,6 +224,7 @@
 <div class="input-group mb-6">
 <label class="text-on-surface-variant text-sm font-semibold mb-2 block">Имя пользователя (опционально)</label>
 <input type="text" id="username" placeholder="Введите ваше имя" class="w-full bg-surface-container-high border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary">
+<div class="text-xs text-on-surface-variant mt-2">2–32 символа, только латиница, цифры, <code>_</code> или <code>-</code>. Оставьте пустым — сгенерируем из email.</div>
 </div>
 <div id="create-error" class="text-error text-sm mb-4 hidden"></div>
 <button id="create-key-btn" class="primary-gradient text-on-primary py-4 rounded-full font-bold text-lg w-full active:scale-95 transition-all">Сгенерировать ключ</button>
@@ -268,7 +272,7 @@
 </section>
 
 <!-- Feature Section -->
-<section class="px-6 py-12">
+<section id="marketing-section" class="px-6 py-12">
 <h2 class="font-headline text-3xl font-bold mb-8 pl-2 border-l-4 border-primary">Современные протоколы</h2>
 <div class="grid grid-cols-1 gap-6">
 <div class="bg-surface-container p-8 rounded-xl relative overflow-hidden group">
@@ -303,7 +307,7 @@
 </section>
 
 <!-- Dynamic Map Section -->
-<section class="px-6 py-12">
+<section id="map-section" class="px-6 py-12">
 <div class="bg-surface-container-lowest rounded-2xl overflow-hidden h-[300px] relative border border-outline-variant/10">
 <img class="w-full h-full object-cover opacity-40 grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAcPI7dNS4rA8QvzPzuP5j6jCaeZCww4fNYQSU9xW2kniDb-iXfiulZhj8qmrjrNtAj3bGoe5CAwvU-yypjw8Wi8VAetuZzNRRYnl2ACChlVjL8DLBVk_EncqXL0DNn8q6fpZPoDg_DKF7EDKPrIXOwYyhueRdtHzba00tobI5y4yKIMz23WPpCC_mEkTtRYAolKVaTB8SrZ-ifxUAmLQljSJN1Xedm9Xd3-1ERzmOxMOGIvOo7dnAksH4CwTFljL5i52qzlwrqorY" alt="World Map">
 <div class="absolute inset-0 bg-gradient-to-t from-surface to-transparent"></div>
@@ -481,6 +485,7 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
         document.getElementById('otp-email').textContent = email;
         document.getElementById('email-section').classList.add('hidden');
         document.getElementById('otp-section').classList.remove('hidden');
+        setMarketingVisible(true);
         
         digits.forEach(d => d.value = '');
         digits[0].focus();
@@ -606,10 +611,6 @@ fetch(`${API_URL}/api/servers`)
             btn.innerHTML = `
                 <span class="text-3xl mb-2 block">${s.flag}</span>
                 <span class="font-semibold">${s.name}</span>
-                <div class="server-status mt-2 flex items-center justify-center gap-1">
-                    <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                    <span class="text-xs text-green-500">доступен</span>
-                </div>
             `;
             btn.onclick = () => {
                 document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('selected'));
@@ -629,14 +630,29 @@ function hideAllSections() {
         .forEach(id => document.getElementById(id)?.classList.add('hidden'));
 }
 
+function setMarketingVisible(show) {
+    ['marketing-section','map-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !show);
+    });
+}
+
+function showEmailSection() {
+    hideAllSections();
+    document.getElementById('email-section').classList.remove('hidden');
+    setMarketingVisible(true);
+}
+
 function showServerSection() {
     hideAllSections();
     document.getElementById('server-section').classList.remove('hidden');
+    setMarketingVisible(false);
     window.scrollTo({ top: document.getElementById('server-section').offsetTop - 80, behavior: 'smooth' });
 }
 
 function showResult(data, toastMessage) {
     hideAllSections();
+    setMarketingVisible(false);
     document.getElementById('result-section').classList.remove('hidden');
     document.getElementById('qr-img').src = 'data:image/png;base64,' + data.qr;
     document.getElementById('vless-url').textContent = data.vless_url;
@@ -662,6 +678,7 @@ function fmtDate(iso) {
 
 async function loadMyKeys() {
     hideAllSections();
+    setMarketingVisible(false);
     document.getElementById('my-keys-section').classList.remove('hidden');
     document.getElementById('my-keys-loading').classList.remove('hidden');
     document.getElementById('my-keys-empty').classList.add('hidden');
@@ -854,11 +871,11 @@ async function checkSession() {
             localStorage.removeItem('user_email');
             sessionToken = null;
             document.getElementById('user-email-display').classList.add('hidden');
-            document.getElementById('email-section').classList.remove('hidden');
+            showEmailSection();
         }
     } catch (e) {
         document.getElementById('user-email-display').textContent = userEmail || '';
-        document.getElementById('email-section').classList.remove('hidden');
+        showEmailSection();
     }
 }
 checkSession();
@@ -868,6 +885,16 @@ document.getElementById('reset-btn')?.addEventListener('click', resetForm);
 document.getElementById('new-key-btn')?.addEventListener('click', showServerSection);
 document.getElementById('create-first-btn')?.addEventListener('click', showServerSection);
 document.getElementById('server-back-btn')?.addEventListener('click', loadMyKeys);
+document.getElementById('change-email-btn')?.addEventListener('click', () => {
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    const btn = document.getElementById('send-code-btn');
+    btn.disabled = false;
+    btn.textContent = 'Отправить код';
+    digits.forEach(d => d.value = '');
+    document.getElementById('otp-error')?.classList.add('hidden');
+    showEmailSection();
+    document.getElementById('login-email').focus();
+});
 
 // Enter key handlers
 document.getElementById('login-email')?.addEventListener('keypress', (e) => {

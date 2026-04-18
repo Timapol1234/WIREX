@@ -56,9 +56,6 @@ SMTP_CONFIG = {
     "password": _secrets.get("smtp_password", "")
 }
 
-# Максимальное количество пользователей на сервер
-MAX_USERS_PER_SERVER = 10
-
 # 4 сервера с правильными параметрами
 SERVERS = {
     "amsterdam": {
@@ -132,52 +129,6 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
     response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     return response
-
-# Функции для статистики серверов
-def get_xray_stats(server_key):
-    """Получает количество активных подключений с сервера"""
-    s = SERVERS[server_key]
-    
-    try:
-        if s.get("remote"):
-            cmd = f'ssh {s["ssh"]} "ss -tn | grep :{s["port"]} | wc -l"'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-            connections = int(result.stdout.strip() or 0)
-        else:
-            result = subprocess.run(f'ss -tn | grep ":{s["port"]}" | wc -l', shell=True, capture_output=True, text=True)
-            connections = int(result.stdout.strip() or 0)
-        
-        # Получаем количество клиентов в конфиге
-        count_script = (
-            "import json\n"
-            f"c = json.load(open({s['xray_config']!r}))\n"
-            "ib = next((i for i in c['inbounds'] if i.get('protocol') == 'vless'), None)\n"
-            "print(len(ib['settings']['clients']) if ib else 0)\n"
-        )
-        if s.get("remote"):
-            r = subprocess.run(
-                ["ssh", "-o", "StrictHostKeyChecking=no", s["ssh"], "python3", "-"],
-                input=count_script, capture_output=True, text=True, timeout=5
-            )
-        else:
-            r = subprocess.run(
-                ["python3", "-"],
-                input=count_script, capture_output=True, text=True, timeout=5
-            )
-        clients_count = int(r.stdout.strip() or 0)
-        
-        return {
-            "active_connections": connections,
-            "total_clients": clients_count,
-            "is_overloaded": connections > MAX_USERS_PER_SERVER
-        }
-    except Exception as e:
-        print(f"Error getting stats for {server_key}: {e}")
-        return {
-            "active_connections": 0,
-            "total_clients": 0,
-            "is_overloaded": False
-        }
 
 def load_verification_codes():
     if os.path.exists(VERIFICATION_CODES_DB):
@@ -289,45 +240,6 @@ def send_verification_email(email, code):
     except Exception as e:
         print(f"Email error: {e}")
         return False
-
-@app.route('/api/status', methods=['GET'])
-def get_servers_status():
-    import time
-    
-    statuses = {}
-    for key, server in SERVERS.items():
-        ip = server['ip']
-        port = server['port']
-        
-        try:
-            start = time.time()
-            result = subprocess.run(
-                ["ping", "-c", "1", "-W", "2", ip],
-                capture_output=True,
-                timeout=3
-            )
-            latency = round((time.time() - start) * 1000)
-            
-            if result.returncode == 0:
-                statuses[key] = {
-                    "status": "online",
-                    "latency": latency,
-                    "port": port,
-                    "ip": ip
-                }
-            else:
-                statuses[key] = {"status": "offline", "latency": None}
-        except:
-            statuses[key] = {"status": "offline", "latency": None}
-    
-    return jsonify(statuses)
-
-@app.route('/api/server-stats', methods=['GET'])
-def get_server_stats():
-    stats = {}
-    for key in SERVERS.keys():
-        stats[key] = get_xray_stats(key)
-    return jsonify(stats)
 
 @app.route("/api/send-code", methods=["POST"])
 def send_code():
@@ -769,14 +681,6 @@ def admin_stats():
     })
 
 
-@app.route("/api/users", methods=["POST"])
-def list_users():
-    data = request.json
-    if not _is_admin(data):
-        return jsonify({"error": "Неверный пароль"}), 403
-    users = load_users()
-    return jsonify(users)
-
 @app.route("/api/delete", methods=["POST"])
 def delete_user():
     data = request.json
@@ -804,98 +708,6 @@ def delete_user():
     users = [u for u in users if u["username"].lower() != username.lower()]
     save_users(users)
 
-    return jsonify({"ok": True})
-
-CHATS_DB = "/opt/vpn-site/chats.json"
-
-def load_chats():
-    if os.path.exists(CHATS_DB):
-        with open(CHATS_DB, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_chats(chats):
-    os.makedirs(os.path.dirname(CHATS_DB), exist_ok=True)
-    with open(CHATS_DB, "w") as f:
-        json.dump(chats, f, indent=2, ensure_ascii=False)
-
-@app.route("/api/chat/send", methods=["POST"])
-def chat_send():
-    data = request.json
-    chat_id = data.get("chat_id", "")
-    name = data.get("name", "").strip()
-    message = data.get("message", "").strip()
-
-    if not chat_id or not message:
-        return jsonify({"error": "Пустое сообщение"}), 400
-
-    chats = load_chats()
-    if chat_id not in chats:
-        chats[chat_id] = {"name": name or "Гость", "messages": []}
-
-    from datetime import datetime
-    chats[chat_id]["messages"].append({
-        "from": "user",
-        "text": message,
-        "time": datetime.now().strftime("%H:%M")
-    })
-    save_chats(chats)
-    return jsonify({"ok": True})
-
-@app.route("/api/chat/get", methods=["POST"])
-def chat_get():
-    data = request.json
-    chat_id = data.get("chat_id", "")
-    chats = load_chats()
-    chat = chats.get(chat_id, {"messages": []})
-    return jsonify(chat["messages"])
-
-@app.route("/api/chat/list", methods=["POST"])
-def chat_list():
-    data = request.json
-    if not _is_admin(data):
-        return jsonify({"error": "Неверный пароль"}), 403
-    chats = load_chats()
-    result = []
-    for cid, chat in chats.items():
-        last_msg = chat["messages"][-1] if chat["messages"] else None
-        unread = sum(1 for m in chat["messages"] if m["from"] == "user" and not m.get("read"))
-        result.append({
-            "chat_id": cid,
-            "name": chat.get("name", "Гость"),
-            "last_message": last_msg["text"][:50] if last_msg else "",
-            "last_time": last_msg["time"] if last_msg else "",
-            "unread": unread
-        })
-    return jsonify(result)
-
-@app.route("/api/chat/reply", methods=["POST"])
-def chat_reply():
-    data = request.json
-    if not _is_admin(data):
-        return jsonify({"error": "Неверный пароль"}), 403
-
-    chat_id = data.get("chat_id", "")
-    message = data.get("message", "").strip()
-
-    if not chat_id or not message:
-        return jsonify({"error": "Пустое сообщение"}), 400
-
-    chats = load_chats()
-    if chat_id not in chats:
-        return jsonify({"error": "Чат не найден"}), 404
-
-    from datetime import datetime
-    for m in chats[chat_id]["messages"]:
-        if m["from"] == "user":
-            m["read"] = True
-
-    chats[chat_id]["messages"].append({
-        "from": "admin",
-        "text": message,
-        "time": datetime.now().strftime("%H:%M")
-    })
-    save_chats(chats)
     return jsonify({"ok": True})
 
 @app.route("/sub/<path:filename>")

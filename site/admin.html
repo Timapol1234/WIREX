@@ -20,11 +20,6 @@
   tr:hover td { background: #161a21; }
   .btn-danger { background: rgba(255, 113, 108, 0.15); color: #ff716c; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
   .btn-danger:hover { background: rgba(255, 113, 108, 0.25); }
-  .chat-item { cursor: pointer; }
-  .chat-item:hover { background: #1c2028; }
-  .chat-item.active { background: #22262f; border-left: 3px solid #00eefc; }
-  .msg-user { background: #22262f; align-self: flex-start; }
-  .msg-admin { background: rgba(0, 238, 252, 0.15); color: #00eefc; align-self: flex-end; }
 </style>
 </head>
 <body class="bg-[#0b0e14]">
@@ -82,7 +77,7 @@
     </div>
 
     <!-- USERS TABLE -->
-    <div class="bg-[#161a21] rounded-2xl overflow-hidden mb-10">
+    <div class="bg-[#161a21] rounded-2xl overflow-hidden">
       <div class="flex items-center justify-between px-6 py-4 border-b border-[#22262f]">
         <h2 class="font-headline text-xl font-bold">Пользователи</h2>
         <input id="search" placeholder="Поиск по имени/email..." class="bg-[#22262f] px-3 py-1.5 rounded-full text-sm w-64 focus:outline-none focus:ring-1 focus:ring-[#00eefc]/40">
@@ -109,27 +104,6 @@
       </div>
     </div>
 
-    <!-- CHATS -->
-    <div class="bg-[#161a21] rounded-2xl overflow-hidden">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-[#22262f]">
-        <h2 class="font-headline text-xl font-bold">Чаты</h2>
-        <span id="chats-count" class="text-xs text-[#a9abb3]"></span>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-3 min-h-[400px]">
-        <div id="chats-list" class="border-r border-[#22262f] overflow-y-auto max-h-[500px]">
-          <div class="p-6 text-center text-[#a9abb3] text-sm">Чатов пока нет</div>
-        </div>
-        <div id="chat-view" class="md:col-span-2 flex flex-col">
-          <div id="chat-messages" class="flex-1 p-6 flex flex-col gap-3 overflow-y-auto max-h-[440px]">
-            <div class="text-center text-[#a9abb3] text-sm">Выберите чат слева</div>
-          </div>
-          <div id="chat-reply" class="hidden p-4 border-t border-[#22262f] flex gap-2">
-            <input id="chat-input" placeholder="Ответ пользователю..." class="flex-1 bg-[#22262f] px-4 py-2 rounded-full focus:outline-none focus:ring-1 focus:ring-[#00eefc]/40">
-            <button id="chat-send-btn" class="primary-gradient text-[#005d63] px-5 py-2 rounded-full font-bold">Отправить</button>
-          </div>
-        </div>
-      </div>
-    </div>
   </main>
 </section>
 
@@ -138,7 +112,6 @@ const API_URL = 'http://109.248.162.180:8080';
 let adminPass = sessionStorage.getItem('admin_pass') || '';
 let refreshTimer = null;
 let allUsers = [];
-let activeChatId = null;
 
 function fmtBytes(n) {
   if (!n) return '0 B';
@@ -186,12 +159,8 @@ function showDashboard() {
 
 async function loadAll() {
   try {
-    const [stats, chats] = await Promise.all([
-      api('/api/admin/stats'),
-      api('/api/chat/list')
-    ]);
+    const stats = await api('/api/admin/stats');
     renderStats(stats);
-    renderChats(chats);
     document.getElementById('last-refresh').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
   } catch (e) { /* уже обработано в api() */ }
 }
@@ -252,65 +221,6 @@ async function deleteUser(username) {
   } catch (e) { /* already handled */ }
 }
 
-function renderChats(chats) {
-  document.getElementById('chats-count').textContent = chats.length + ' чатов';
-  const list = document.getElementById('chats-list');
-  if (!chats.length) {
-    list.innerHTML = '<div class="p-6 text-center text-[#a9abb3] text-sm">Чатов пока нет</div>';
-    return;
-  }
-  list.innerHTML = chats.map(c => `
-    <div class="chat-item p-4 border-b border-[#22262f] ${c.chat_id === activeChatId ? 'active' : ''}" data-chat="${escapeHtml(c.chat_id)}">
-      <div class="flex justify-between items-start mb-1">
-        <div class="font-semibold">${escapeHtml(c.name)}</div>
-        <div class="text-xs text-[#a9abb3]">${escapeHtml(c.last_time || '')}</div>
-      </div>
-      <div class="text-sm text-[#a9abb3] truncate">${escapeHtml(c.last_message || '')}</div>
-      ${c.unread ? `<div class="inline-block mt-1 bg-[#00eefc] text-[#005d63] text-xs font-bold px-2 py-0.5 rounded-full">${c.unread}</div>` : ''}
-    </div>
-  `).join('');
-
-  list.querySelectorAll('[data-chat]').forEach(el => {
-    el.onclick = () => openChat(el.dataset.chat);
-  });
-}
-
-async function openChat(chatId) {
-  activeChatId = chatId;
-  document.querySelectorAll('.chat-item').forEach(el => el.classList.toggle('active', el.dataset.chat === chatId));
-  try {
-    const msgs = await api('/api/chat/get', {chat_id: chatId});
-    const box = document.getElementById('chat-messages');
-    if (!msgs.length) {
-      box.innerHTML = '<div class="text-center text-[#a9abb3] text-sm">Пусто</div>';
-    } else {
-      box.innerHTML = msgs.map(m => `
-        <div class="max-w-[70%] px-4 py-2 rounded-2xl ${m.from === 'admin' ? 'msg-admin' : 'msg-user'}">
-          <div class="text-xs opacity-70 mb-0.5">${m.from === 'admin' ? 'Вы' : 'Пользователь'} · ${escapeHtml(m.time)}</div>
-          <div>${escapeHtml(m.text)}</div>
-        </div>
-      `).join('');
-      box.scrollTop = box.scrollHeight;
-    }
-    document.getElementById('chat-reply').classList.remove('hidden');
-  } catch (e) { /* handled */ }
-}
-
-async function sendReply() {
-  const input = document.getElementById('chat-input');
-  const text = input.value.trim();
-  if (!text || !activeChatId) return;
-  const btn = document.getElementById('chat-send-btn');
-  btn.disabled = true;
-  try {
-    await api('/api/chat/reply', {chat_id: activeChatId, message: text});
-    input.value = '';
-    openChat(activeChatId);
-    loadAll();
-  } catch (e) { /* handled */ }
-  finally { btn.disabled = false; }
-}
-
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -354,10 +264,6 @@ document.getElementById('logout-btn').onclick = () => {
   showLogin();
 };
 document.getElementById('search').addEventListener('input', renderUsers);
-document.getElementById('chat-send-btn').onclick = sendReply;
-document.getElementById('chat-input').addEventListener('keypress', e => {
-  if (e.key === 'Enter') sendReply();
-});
 
 // Auto-login если пароль уже в sessionStorage
 if (adminPass) showDashboard();
