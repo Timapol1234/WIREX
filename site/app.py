@@ -70,6 +70,15 @@ SMTP_CONFIG = {
     "password": _secrets.get("smtp_password", "")
 }
 
+ADMIN_EMAIL = _secrets.get("admin_email", "")
+ALERTS_STATE_FILE = "/opt/vpn-site/alerts_state.json"
+ALERTS_LOG_FILE = "/opt/vpn-site/alerts_log.json"
+ALERTS_COOLDOWN_SEC = 1800  # 30 мин между повторами того же набора проблем
+ALERTS_CHECK_INTERVAL_SEC = 300  # 5 мин между проверками
+ALERTS_LOG_MAX = 200
+ALERT_LOAD_RATIO = 2.0   # load_1m / cpu_count > 2.0 → перегруз
+ALERT_MEM_PCT = 90       # mem_used / mem_total > 90% → тревога
+
 # 4 сервера с правильными параметрами
 SERVERS = {
     "amsterdam": {
@@ -1580,7 +1589,224 @@ def serve_subscription(filename):
         content = f.read()
     return content, 200, {"Content-Type": "text/plain"}
 
+ISSUE_LABELS = {
+    "offline": "Сервер не отвечает",
+    "xray_stopped": "Xray остановлен",
+    "overload": f"Перегрузка CPU (load > {ALERT_LOAD_RATIO}× ядер)",
+    "mem_high": f"Память занята > {ALERT_MEM_PCT}%",
+}
+
+
+def _load_json(path, default):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def _save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def compute_server_issues(s):
+    """Возвращает отсортированный список кодов проблем для метрик сервера."""
+    issues = []
+    if not s.get("online"):
+        issues.append("offline")
+    else:
+        if s.get("xray_active") is False:
+            issues.append("xray_stopped")
+        load = s.get("load_1m")
+        cpu = s.get("cpu_count") or 1
+        if load is not None and cpu and (load / cpu) > ALERT_LOAD_RATIO:
+            issues.append("overload")
+        mem_t, mem_u = s.get("mem_total"), s.get("mem_used")
+        if mem_t and mem_u and (mem_u / mem_t * 100) > ALERT_MEM_PCT:
+            issues.append("mem_high")
+    return sorted(issues)
+
+
+def send_admin_email(subject, body_html):
+    """Отправляет письмо на ADMIN_EMAIL. Возвращает True при успехе."""
+    if not (ADMIN_EMAIL and SMTP_CONFIG["password"] and SMTP_CONFIG["username"]):
+        return False
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"BYPASS Alerts <{SMTP_CONFIG['username']}>"
+        msg['To'] = ADMIN_EMAIL
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_html, 'html'))
+        server = smtplib.SMTP(SMTP_CONFIG["server"], SMTP_CONFIG["port"])
+        server.starttls()
+        server.login(SMTP_CONFIG["username"], SMTP_CONFIG["password"])
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"[alerts] email error: {e}")
+        return False
+
+
+def _append_alert_log(entry):
+    log = _load_json(ALERTS_LOG_FILE, [])
+    log.append(entry)
+    if len(log) > ALERTS_LOG_MAX:
+        log = log[-ALERTS_LOG_MAX:]
+    _save_json(ALERTS_LOG_FILE, log)
+
+
+def _build_alert_email(srv_key, srv, new_issues, resolved_issues):
+    s = SERVERS.get(srv_key, {})
+    title = f"{s.get('flag','')} {s.get('name', srv_key)}"
+    rows = []
+    if new_issues:
+        rows.append("<b style='color:#c7183d'>Новые проблемы:</b><ul>" +
+                    "".join(f"<li>{ISSUE_LABELS.get(i,i)}</li>" for i in new_issues) + "</ul>")
+    if resolved_issues:
+        rows.append("<b style='color:#1a7f37'>Восстановилось:</b><ul>" +
+                    "".join(f"<li>{ISSUE_LABELS.get(i,i)}</li>" for i in resolved_issues) + "</ul>")
+    load = srv.get("load_1m")
+    cpu = srv.get("cpu_count")
+    mem_t = srv.get("mem_total"); mem_u = srv.get("mem_used")
+    mem_pct = round(mem_u / mem_t * 100) if (mem_t and mem_u) else None
+    body = f"""
+    <html><body style='font-family:Arial,sans-serif;max-width:600px'>
+    <h2 style='margin:0 0 8px'>⚠️ BYPASS alerts — {title}</h2>
+    <div style='color:#666;font-size:12px;margin-bottom:16px'>{s.get('ip','')}:{s.get('port','')}</div>
+    {''.join(rows)}
+    <hr style='border:none;border-top:1px solid #ddd;margin:16px 0'>
+    <div style='font-size:12px;color:#444'>
+      online: <b>{srv.get('online')}</b> · xray: <b>{srv.get('xray_active')}</b>
+      · load 1m/5m/15m: <b>{load}</b> / {srv.get('load_5m')} / {srv.get('load_15m')} на {cpu or '?'} CPU
+      · mem: <b>{mem_pct if mem_pct is not None else '?'}%</b>
+      · latency: {srv.get('latency_ms','?')} мс
+    </div>
+    </body></html>
+    """
+    subj_parts = [f"[BYPASS] {s.get('name', srv_key)}"]
+    if new_issues: subj_parts.append("PROBLEM: " + ", ".join(new_issues))
+    if resolved_issues and not new_issues: subj_parts.append("RECOVERED: " + ", ".join(resolved_issues))
+    return " · ".join(subj_parts), body
+
+
+def check_and_alert():
+    """Разовая проверка: сравнивает состояние с прошлым, отправляет алерты на переходы.
+    Можно звать из фона или вручную через админский эндпоинт."""
+    metrics, _ = get_servers_stats(force_refresh=True)
+    state = _load_json(ALERTS_STATE_FILE, {"servers": {}})
+    by_key = state.setdefault("servers", {})
+    now = int(time.time())
+    events = []
+
+    for srv in metrics:
+        k = srv["key"]
+        curr_issues = compute_server_issues(srv)
+        prev = by_key.get(k, {"issues": [], "last_alert_ts": 0, "alerted_issues": []})
+        prev_issues = prev.get("issues", [])
+        prev_alerted = prev.get("alerted_issues", [])
+        last_ts = prev.get("last_alert_ts", 0)
+
+        new = [i for i in curr_issues if i not in prev_issues]
+        resolved = [i for i in prev_issues if i not in curr_issues]
+
+        should_alert = False
+        if new or resolved:
+            should_alert = True
+        elif curr_issues and curr_issues != prev_alerted and (now - last_ts) > ALERTS_COOLDOWN_SEC:
+            # cooldown истёк и проблемы всё ещё есть — напоминание
+            new = curr_issues
+            should_alert = True
+
+        if should_alert and (new or resolved):
+            subj, body = _build_alert_email(k, srv, new, resolved)
+            ok = send_admin_email(subj, body)
+            events.append({
+                "ts": now, "server": k, "server_name": srv.get("name", k),
+                "new": new, "resolved": resolved,
+                "email_sent": ok, "email_target": ADMIN_EMAIL or None,
+            })
+            _append_alert_log(events[-1])
+            by_key[k] = {"issues": curr_issues, "last_alert_ts": now, "alerted_issues": curr_issues}
+        else:
+            by_key[k] = {"issues": curr_issues, "last_alert_ts": last_ts, "alerted_issues": prev_alerted}
+
+    _save_json(ALERTS_STATE_FILE, state)
+    return events
+
+
+def _alerts_watcher():
+    """Фон: раз в ALERTS_CHECK_INTERVAL_SEC проверяем серверы и шлём письма."""
+    # Небольшая пауза при старте, чтобы не спамить если сервер только что перезагрузили
+    time.sleep(30)
+    while True:
+        try:
+            check_and_alert()
+        except Exception as e:
+            print(f"[alerts] watcher error: {e}")
+        time.sleep(ALERTS_CHECK_INTERVAL_SEC)
+
+
+@app.route("/api/admin/alerts", methods=["POST"])
+def admin_alerts():
+    """Текущее состояние + лог последних событий."""
+    _, err = _require_admin()
+    if err: return err
+    state = _load_json(ALERTS_STATE_FILE, {"servers": {}})
+    log = _load_json(ALERTS_LOG_FILE, [])
+    current = []
+    for srv_key, info in (state.get("servers") or {}).items():
+        current.append({
+            "server": srv_key,
+            "name": SERVERS.get(srv_key, {}).get("name", srv_key),
+            "flag": SERVERS.get(srv_key, {}).get("flag", ""),
+            "issues": info.get("issues", []),
+            "last_alert_ts": info.get("last_alert_ts", 0),
+        })
+    current.sort(key=lambda x: (not x["issues"], x["server"]))
+    return jsonify({
+        "current": current,
+        "log": list(reversed(log[-50:])),
+        "admin_email": ADMIN_EMAIL or None,
+        "labels": ISSUE_LABELS,
+        "interval_sec": ALERTS_CHECK_INTERVAL_SEC,
+        "cooldown_sec": ALERTS_COOLDOWN_SEC,
+    })
+
+
+@app.route("/api/admin/alerts-run", methods=["POST"])
+def admin_alerts_run():
+    """Принудительная проверка (не ждать 5 минут)."""
+    _, err = _require_admin()
+    if err: return err
+    events = check_and_alert()
+    return jsonify({"ok": True, "events": events})
+
+
+@app.route("/api/admin/alerts-test", methods=["POST"])
+def admin_alerts_test():
+    """Тестовое письмо — проверить, что SMTP и admin_email настроены."""
+    _, err = _require_admin()
+    if err: return err
+    if not ADMIN_EMAIL:
+        return jsonify({"error": "admin_email не задан в secrets.json"}), 400
+    ok = send_admin_email(
+        "[BYPASS] Тестовое письмо алертов",
+        "<p>Это тестовое сообщение из админ-панели BYPASS. Если вы его получили — алерты настроены корректно.</p>"
+    )
+    return jsonify({"ok": ok, "admin_email": ADMIN_EMAIL})
+
+
 if __name__ == "__main__":
     t = threading.Thread(target=_subscription_sweeper, daemon=True)
     t.start()
+    if ADMIN_EMAIL:
+        ta = threading.Thread(target=_alerts_watcher, daemon=True)
+        ta.start()
+    else:
+        print("WARNING: admin_email не задан — алерты выключены")
     app.run(host="0.0.0.0", port=8080)

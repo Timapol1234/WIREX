@@ -96,6 +96,7 @@
       <button class="tab-btn" data-tab="subs">Подписки</button>
       <button class="tab-btn" data-tab="promos">Промокоды</button>
       <button class="tab-btn" data-tab="servers">Серверы</button>
+      <button class="tab-btn" data-tab="alerts">Алерты</button>
       <button class="tab-btn" data-tab="backups">Бэкапы</button>
     </div>
 
@@ -266,6 +267,30 @@
       </div>
       <div id="servers-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="text-[#a9abb3] text-sm">Нажмите «Обновить», чтобы опросить серверы.</div>
+      </div>
+    </div>
+
+    <!-- ALERTS -->
+    <div id="tab-alerts" class="tab-panel hidden">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="font-headline text-xl font-bold">Алерты</h2>
+          <div id="alerts-meta" class="text-xs text-[#a9abb3] mt-1">—</div>
+        </div>
+        <div class="flex gap-2">
+          <button id="alerts-refresh-btn" class="btn-primary">Обновить</button>
+          <button id="alerts-run-btn" class="btn-primary">Проверить сейчас</button>
+          <button id="alerts-test-btn" class="btn-primary">Тестовое письмо</button>
+        </div>
+      </div>
+      <div id="alerts-email-warn" class="hidden bg-[#3a1f25] text-[#ff9aa7] rounded-lg p-3 text-sm mb-4"></div>
+      <h3 class="font-headline font-semibold mb-2">Текущее состояние</h3>
+      <div id="alerts-current" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+        <div class="text-[#a9abb3] text-sm">Нажмите «Обновить».</div>
+      </div>
+      <h3 class="font-headline font-semibold mb-2">Последние события</h3>
+      <div id="alerts-log" class="bg-[#161a21] rounded-2xl border border-[#22262f] divide-y divide-[#22262f]">
+        <div class="p-4 text-[#a9abb3] text-sm">—</div>
       </div>
     </div>
 
@@ -742,6 +767,128 @@ async function loadServers(forceRefresh) {
 
 document.getElementById('servers-refresh-btn')?.addEventListener('click', () => loadServers(true));
 
+// --- Alerts ---
+let alertsLoadedOnce = false;
+
+async function loadAlerts() {
+  const metaEl = document.getElementById('alerts-meta');
+  const warnEl = document.getElementById('alerts-email-warn');
+  const currEl = document.getElementById('alerts-current');
+  const logEl = document.getElementById('alerts-log');
+  const btn = document.getElementById('alerts-refresh-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Загрузка...'; }
+  try {
+    const res = await fetch(`${API_URL}/api/admin/alerts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      currEl.innerHTML = `<div class="text-[#ff716c]">${escapeHtml(data.error || 'Ошибка')}</div>`;
+      return;
+    }
+    alertsLoadedOnce = true;
+    if (metaEl) metaEl.textContent = `Интервал ${data.interval_sec}с · cooldown ${Math.round(data.cooldown_sec/60)} мин · получатель: ${data.admin_email || '—'}`;
+    if (warnEl) {
+      if (!data.admin_email) {
+        warnEl.textContent = 'admin_email не задан в /opt/vpn-site/secrets.json — алерты не будут отправляться. Добавьте "admin_email": "you@example.com" и перезапустите vpn-site.';
+        warnEl.classList.remove('hidden');
+      } else {
+        warnEl.classList.add('hidden');
+      }
+    }
+    const labels = data.labels || {};
+    if (!data.current.length) {
+      currEl.innerHTML = `<div class="text-[#a9abb3] text-sm col-span-full">Нет данных — watcher ещё не стартовал или admin_email не задан.</div>`;
+    } else {
+      currEl.innerHTML = data.current.map(c => {
+        const ok = !c.issues.length;
+        const color = ok ? '#00eefc' : '#ff716c';
+        const status = ok ? 'OK' : c.issues.map(i => escapeHtml(labels[i] || i)).join(', ');
+        return `
+          <div class="bg-[#161a21] rounded-xl p-4 border border-[#22262f]">
+            <div class="flex items-center justify-between">
+              <div class="font-semibold">${c.flag || ''} ${escapeHtml(c.name)}</div>
+              <div class="text-xs font-semibold" style="color:${color}">${ok ? 'OK' : 'ALERT'}</div>
+            </div>
+            <div class="text-xs text-[#a9abb3] mt-1">${status}</div>
+            ${c.last_alert_ts ? `<div class="text-[10px] text-[#a9abb3] mt-1">последний алерт: ${new Date(c.last_alert_ts*1000).toLocaleString('ru-RU')}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+    if (!data.log.length) {
+      logEl.innerHTML = `<div class="p-4 text-[#a9abb3] text-sm">Событий нет.</div>`;
+    } else {
+      logEl.innerHTML = data.log.map(e => {
+        const newStr = (e.new || []).map(i => labels[i] || i).join(', ');
+        const resStr = (e.resolved || []).map(i => labels[i] || i).join(', ');
+        const lines = [];
+        if (newStr) lines.push(`<span style="color:#ff716c">▲</span> ${escapeHtml(newStr)}`);
+        if (resStr) lines.push(`<span style="color:#00eefc">▼</span> ${escapeHtml(resStr)}`);
+        const email = e.email_sent ? '<span style="color:#00eefc">email отправлен</span>' : '<span style="color:#ff9aa7">email не отправлен</span>';
+        return `
+          <div class="p-4">
+            <div class="flex items-center justify-between">
+              <div class="font-semibold text-sm">${escapeHtml(e.server_name || e.server)}</div>
+              <div class="text-xs text-[#a9abb3]">${new Date(e.ts*1000).toLocaleString('ru-RU')}</div>
+            </div>
+            <div class="text-xs mt-1 space-y-1">${lines.map(l => `<div>${l}</div>`).join('')}</div>
+            <div class="text-[10px] mt-1">${email}${e.email_target ? ' → ' + escapeHtml(e.email_target) : ''}</div>
+          </div>
+        `;
+      }).join('');
+    }
+  } catch (e) {
+    currEl.innerHTML = `<div class="text-[#ff716c]">Ошибка: ${escapeHtml(String(e))}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Обновить'; }
+  }
+}
+
+async function runAlertsNow() {
+  const btn = document.getElementById('alerts-run-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Проверяю...'; }
+  try {
+    const res = await fetch(`${API_URL}/api/admin/alerts-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass })
+    });
+    const data = await res.json();
+    alert(`Готово. Событий: ${(data.events || []).length}`);
+    await loadAlerts();
+  } catch (e) {
+    alert('Ошибка: ' + String(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Проверить сейчас'; }
+  }
+}
+
+async function testAlertEmail() {
+  const btn = document.getElementById('alerts-test-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Отправляю...'; }
+  try {
+    const res = await fetch(`${API_URL}/api/admin/alerts-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass })
+    });
+    const data = await res.json();
+    if (data.ok) alert('Письмо отправлено на ' + data.admin_email);
+    else alert('Не отправлено: ' + (data.error || 'проверь SMTP-пароль и admin_email'));
+  } catch (e) {
+    alert('Ошибка: ' + String(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Тестовое письмо'; }
+  }
+}
+
+document.getElementById('alerts-refresh-btn')?.addEventListener('click', loadAlerts);
+document.getElementById('alerts-run-btn')?.addEventListener('click', runAlertsNow);
+document.getElementById('alerts-test-btn')?.addEventListener('click', testAlertEmail);
+
 // --- Backups ---
 let backupsLoadedOnce = false;
 
@@ -829,6 +976,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
     if (btn.dataset.tab === 'servers' && !serversLoadedOnce) loadServers(false);
+    if (btn.dataset.tab === 'alerts' && !alertsLoadedOnce) loadAlerts();
     if (btn.dataset.tab === 'backups' && !backupsLoadedOnce) loadBackups();
   };
 });
