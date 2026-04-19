@@ -83,7 +83,8 @@ SERVERS = {
         "sid": "abcd1234",
         "fp": "chrome",
         "xray_config": "/usr/local/etc/xray/config.json",
-        "remote": False
+        "remote": False,
+        "max_users": 30
     },
     "usa": {
         "name": "США",
@@ -97,7 +98,8 @@ SERVERS = {
         "fp": "chrome",
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
-        "ssh": "root@31.56.229.94"
+        "ssh": "root@31.56.229.94",
+        "max_users": 30
     },
     "finland": {
         "name": "Финляндия",
@@ -111,7 +113,8 @@ SERVERS = {
         "fp": "chrome",
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
-        "ssh": "root@109.248.161.20"
+        "ssh": "root@109.248.161.20",
+        "max_users": 30
     },
     "france": {
         "name": "Франция",
@@ -125,9 +128,12 @@ SERVERS = {
         "fp": "chrome",
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
-        "ssh": "root@45.38.23.141"
+        "ssh": "root@45.38.23.141",
+        "max_users": 30
     }
 }
+
+DEFAULT_MAX_USERS = 30
 
 ADMIN_PASSWORD = _secrets.get("admin_password", "")
 
@@ -696,6 +702,8 @@ def get_servers_stats(force_refresh=False):
             "remote": s.get("remote", False),
             "users_total": counts["total"],
             "users_active": counts["active"],
+            "max_users": s.get("max_users", DEFAULT_MAX_USERS),
+            "full": counts["total"] >= s.get("max_users", DEFAULT_MAX_USERS),
             **metrics,
         })
     _SERVER_METRICS_CACHE["ts"] = now
@@ -731,13 +739,23 @@ def index():
 
 @app.route("/api/servers")
 def get_servers():
+    users = load_users()
+    counts = {}
+    for u in users:
+        srv = u.get("server")
+        if srv: counts[srv] = counts.get(srv, 0) + 1
     result = {}
     for key, s in SERVERS.items():
+        max_users = s.get("max_users", DEFAULT_MAX_USERS)
+        cnt = counts.get(key, 0)
         result[key] = {
             "name": s["name"],
             "flag": s["flag"],
             "ip": s["ip"],
-            "port": s["port"]
+            "port": s["port"],
+            "users_count": cnt,
+            "max_users": max_users,
+            "full": cnt >= max_users
         }
     return jsonify(result)
 
@@ -786,6 +804,11 @@ def create_key():
     email_lc = session["email"].lower()
     if any((u.get("email") or "").lower() == email_lc and u.get("server") == server_key for u in users):
         return jsonify({"error": "У вас уже есть ключ на этом сервере. Замените его, чтобы пересоздать.", "code": "key_exists_on_server"}), 409
+
+    max_users = SERVERS[server_key].get("max_users", DEFAULT_MAX_USERS)
+    server_user_count = sum(1 for u in users if u.get("server") == server_key)
+    if server_user_count >= max_users:
+        return jsonify({"error": "Этот сервер заполнен. Выберите другой.", "code": "server_full"}), 409
 
     user_uuid = str(uuid.uuid4())
 
@@ -897,6 +920,13 @@ def replace_my_key():
            and (not old or u.get("uuid") != old["uuid"])
            for u in users):
         return jsonify({"error": "У вас уже есть ключ на этом сервере.", "code": "key_exists_on_server"}), 409
+
+    # Проверка лимита: только если меняем сервер (иначе число ключей на сервере не растёт)
+    if not old or old.get("server") != server_key:
+        max_users = SERVERS[server_key].get("max_users", DEFAULT_MAX_USERS)
+        server_user_count = sum(1 for u in users if u.get("server") == server_key)
+        if server_user_count >= max_users:
+            return jsonify({"error": "Этот сервер заполнен. Выберите другой.", "code": "server_full"}), 409
 
     if old:
         try:

@@ -697,16 +697,24 @@ function renderServerButtons(busyServers = [], allowedServer = null) {
 
     for (const [key, s] of Object.entries(serversList)) {
         const isBusy = busyServers.includes(key) && key !== allowedServer;
+        const isFull = !!s.full && key !== allowedServer;
+        const disabled = isBusy || isFull;
         const btn = document.createElement('button');
         btn.className = 'server-btn bg-surface-container-high p-4 rounded-xl text-center transition-all';
         btn.setAttribute('data-server', key);
-        btn.disabled = isBusy;
+        btn.disabled = disabled;
+        let label = '';
+        if (isBusy) label = '<div class="text-[10px] mt-1 text-on-surface-variant">уже есть ключ</div>';
+        else if (isFull) label = '<div class="text-[10px] mt-1 text-error">сервер заполнен</div>';
+        else if (typeof s.users_count === 'number' && typeof s.max_users === 'number') {
+            label = `<div class="text-[10px] mt-1 text-on-surface-variant">${s.users_count}/${s.max_users}</div>`;
+        }
         btn.innerHTML = `
             <span class="text-3xl mb-2 block">${s.flag}</span>
             <span class="font-semibold">${s.name}</span>
-            ${isBusy ? '<div class="text-[10px] mt-1 text-on-surface-variant">уже есть ключ</div>' : ''}
+            ${label}
         `;
-        if (isBusy) {
+        if (disabled) {
             btn.classList.add('opacity-40', 'cursor-not-allowed');
         } else {
             btn.classList.add('hover:scale-105');
@@ -721,6 +729,13 @@ function renderServerButtons(busyServers = [], allowedServer = null) {
         container.appendChild(btn);
     }
     return available;
+}
+
+async function refreshServersList() {
+    try {
+        const res = await fetch(`${API_URL}/api/servers`);
+        if (res.ok) serversList = await res.json();
+    } catch (e) { /* ignore */ }
 }
 
 let myKeys = [];
@@ -779,6 +794,9 @@ async function showServerSection({ replaceKey = null } = {}) {
     document.getElementById('server-section').classList.remove('hidden');
     setMarketingVisible(false);
 
+    // Подтягиваем актуальные счётчики/заполненность перед рендером
+    await refreshServersList();
+
     // Рендер серверов: исключаем занятые, но при замене текущий сервер ключа — разрешён
     const busy = myKeys.map(k => k.server);
     const available = renderServerButtons(busy, replaceOldServer);
@@ -793,7 +811,13 @@ async function showServerSection({ replaceKey = null } = {}) {
     const errorEl = document.getElementById('create-error');
     if (available === 0) {
         if (errorEl) {
-            errorEl.textContent = 'Ключи созданы на всех серверах. Удалите или замените существующий ключ.';
+            const anyBusy = busy.length > 0;
+            const allFull = Object.values(serversList).every(s => s.full);
+            errorEl.textContent = allFull
+                ? 'Все серверы сейчас заполнены. Попробуйте позже.'
+                : (anyBusy
+                    ? 'Ключи созданы на всех доступных серверах. Удалите или замените существующий ключ.'
+                    : 'Сейчас нет доступных серверов.');
             errorEl.classList.remove('hidden');
         }
         if (btn) btn.disabled = true;
@@ -1167,7 +1191,9 @@ function renderMyKeys() {
 
     // 1 ключ на сервер: кнопка "Новый ключ" прячется, если на всех серверах уже есть ключи.
     const totalServers = Object.keys(serversList).length;
-    if (newBtn) newBtn.classList.toggle('hidden', totalServers > 0 && myKeys.length >= totalServers);
+    const busy = new Set(myKeys.map(k => k.server));
+    const hasAvailable = Object.entries(serversList).some(([k, s]) => !busy.has(k) && !s.full);
+    if (newBtn) newBtn.classList.toggle('hidden', totalServers > 0 && !hasAvailable);
 
     if (!myKeys.length) {
         empty.classList.remove('hidden');
@@ -1285,6 +1311,14 @@ async function createKey() {
             loadMyKeys();
             openPaymentModal();
             showToast('Нужна активная подписка', 'error');
+            return;
+        }
+
+        if (data.code === 'server_full') {
+            errorEl.textContent = data.error || 'Этот сервер заполнен. Выберите другой.';
+            errorEl.classList.remove('hidden');
+            await refreshServersList();
+            renderServerButtons(myKeys.map(k => k.server), replaceOldServer);
             return;
         }
 

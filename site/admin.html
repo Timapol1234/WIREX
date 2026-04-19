@@ -662,8 +662,8 @@ function renderServers(servers, meta) {
         <div class="grid grid-cols-2 gap-3 text-sm">
           <div class="bg-[#0b0e14] rounded-lg p-3">
             <div class="text-[10px] text-[#a9abb3] uppercase">Ключи</div>
-            <div class="font-semibold text-base">${s.users_active}/${s.users_total}</div>
-            <div class="text-[10px] text-[#a9abb3]">в Xray: ${s.xray_clients != null ? s.xray_clients : '—'}</div>
+            <div class="font-semibold text-base" style="color:${s.full ? '#ff716c' : 'inherit'}">${s.users_total}<span class="text-[#a9abb3] font-normal"> / ${s.max_users ?? '?'}</span></div>
+            <div class="text-[10px] text-[#a9abb3]">активных ${s.users_active} · Xray ${s.xray_clients != null ? s.xray_clients : '—'}${s.full ? ' · <span style="color:#ff716c">заполнен</span>' : ''}</div>
           </div>
           <div class="bg-[#0b0e14] rounded-lg p-3">
             <div class="text-[10px] text-[#a9abb3] uppercase">Xray</div>
