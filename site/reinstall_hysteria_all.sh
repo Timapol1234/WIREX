@@ -24,7 +24,7 @@ echo ">>> ШАГ 1: удаляю Hysteria со всех серверов"
 echo ""
 for s in "${SERVERS[@]}"; do
     echo "--- CLEAN $s ---"
-    ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$s" '
+    ssh -n -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$s" '
         systemctl stop hysteria-server 2>/dev/null || true
         systemctl disable hysteria-server 2>/dev/null || true
         systemctl stop hysteria 2>/dev/null || true
@@ -48,7 +48,7 @@ echo ""
 declare -A OBFS_PASSWORDS
 for s in "${SERVERS[@]}"; do
     echo "--- INSTALL $s ---"
-    OUTPUT=$(ssh -o StrictHostKeyChecking=accept-new "root@$s" "curl -fsSL $INSTALLER_URL | bash" 2>&1)
+    OUTPUT=$(ssh -n -o StrictHostKeyChecking=accept-new "root@$s" "curl -fsSL $INSTALLER_URL | bash" 2>&1)
     echo "$OUTPUT" | tail -25
     # Вытаскиваем obfs password из вывода installer'а
     PW=$(echo "$OUTPUT" | grep -oP 'Obfs password:\s+\K\S+' | head -1)
@@ -64,8 +64,8 @@ echo ">>> ШАГ 3: финальная проверка"
 echo ""
 ALL_OK=1
 for s in "${SERVERS[@]}"; do
-    STATUS=$(ssh "root@$s" 'systemctl is-active hysteria-server' 2>/dev/null)
-    MARKERS=$(ssh "root@$s" 'grep -c "BYPASS-USERS" /etc/hysteria/config.yaml 2>/dev/null || echo 0')
+    STATUS=$(ssh -n "root@$s" 'systemctl is-active hysteria-server' 2>/dev/null)
+    MARKERS=$(ssh -n "root@$s" 'grep -c "BYPASS-USERS" /etc/hysteria/config.yaml 2>/dev/null || echo 0')
     if [ "$STATUS" = "active" ] && [ "$MARKERS" -ge 2 ]; then
         echo "  [OK]  $s : active, markers=$MARKERS"
     else
