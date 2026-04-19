@@ -707,7 +707,14 @@ function renderServerButtons(busyServers = [], allowedServer = null) {
         if (isBusy) label = '<div class="text-[10px] mt-1 text-on-surface-variant">уже есть ключ</div>';
         else if (isFull) label = '<div class="text-[10px] mt-1 text-error">сервер заполнен</div>';
         else if (typeof s.users_count === 'number' && typeof s.max_users === 'number') {
-            label = `<div class="text-[10px] mt-1 text-on-surface-variant">${s.users_count}/${s.max_users}</div>`;
+            const left = s.max_users - s.users_count;
+            if (left > 0 && left <= 5) {
+                const mod10 = left % 10, mod100 = left % 100;
+                const word = (mod10 === 1 && mod100 !== 11) ? 'ключ'
+                           : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) ? 'ключа'
+                           : 'ключей';
+                label = `<div class="text-[10px] mt-1 text-error font-semibold">Осталось ${left} ${word}!</div>`;
+            }
         }
         btn.innerHTML = `
             <span class="text-3xl mb-2 block">${s.flag}</span>
