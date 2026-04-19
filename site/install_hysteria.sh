@@ -93,6 +93,10 @@ obfs:
 auth:
   type: userpass
   userpass:
+    # Seed-запись: Hysteria требует хотя бы одного юзера, иначе не стартует.
+    # Пароль случайный, никем не используется — только чтобы конфиг был валиден
+    # когда список BYPASS-юзеров пустой.
+    __seed__: $(openssl rand -hex 24)
     # BYPASS-USERS-BEGIN
 EOF
 if [ -n "$EXISTING_USERS" ]; then
