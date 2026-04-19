@@ -10,7 +10,7 @@
     # BYPASS-USERS-END
 
 Это позволяет парсить/править список без YAML-зависимости (format контролируем мы).
-Перезагрузка: systemctl reload hysteria-server → SIGHUP, без обрыва активных соединений.
+Перезагрузка: systemctl restart hysteria-server → SIGHUP, без обрыва активных соединений.
 
 Obfs-пароль читается из /etc/hysteria/.obfs_password (тоже создаёт installer).
 Кэшируется в модуле — после рестарта Flask подтянется заново.
@@ -126,7 +126,7 @@ def _write_config_and_reload(server: dict, new_text: str):
              f"cat > {HYSTERIA_CONFIG}.new && "
              f"mv {HYSTERIA_CONFIG}.new {HYSTERIA_CONFIG} && "
              f"chmod 600 {HYSTERIA_CONFIG} && "
-             f"systemctl reload hysteria-server"],
+             f"systemctl restart hysteria-server"],
             input=new_text, capture_output=True, text=True, timeout=20,
         )
     else:

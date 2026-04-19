@@ -135,7 +135,6 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
-ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65535
