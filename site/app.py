@@ -16,6 +16,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
+import sys
+import traceback
 import hysteria_config
 
 app = Flask(__name__, static_folder='static')
@@ -493,6 +495,10 @@ def save_promo_codes(codes):
     _save_json(PROMO_CODES_DB, codes)
 
 
+def _hy_log(msg):
+    print(f"[hysteria] {msg}", file=sys.stderr, flush=True)
+
+
 def add_to_hysteria_safe(server_key, username):
     """Добавляет юзера в Hysteria 2. Best-effort: при ошибке логирует и возвращает None.
     Сервер VLESS от этого не страдает — Hy2 это отдельный протокол поверх."""
@@ -500,9 +506,11 @@ def add_to_hysteria_safe(server_key, username):
         s = SERVERS[server_key]
         password = hysteria_config.generate_password()
         hysteria_config.add_user(s, username, password)
+        _hy_log(f"add_user({server_key}, {username}) OK")
         return password
     except Exception as e:
-        print(f"[hysteria] add_user({server_key}, {username}) failed: {e}")
+        _hy_log(f"add_user({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
+        _hy_log(traceback.format_exc())
         return None
 
 
@@ -512,7 +520,7 @@ def remove_from_hysteria_safe(server_key, username):
         s = SERVERS[server_key]
         hysteria_config.remove_user(s, username)
     except Exception as e:
-        print(f"[hysteria] remove_user({server_key}, {username}) failed: {e}")
+        _hy_log(f"remove_user({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
 
 
 def build_hysteria_url(server_key, username, password):
@@ -522,7 +530,7 @@ def build_hysteria_url(server_key, username, password):
     try:
         return hysteria_config.build_uri(server_key, SERVERS[server_key], username, password)
     except Exception as e:
-        print(f"[hysteria] build_uri({server_key}, {username}) failed: {e}")
+        _hy_log(f"build_uri({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
         return None
 
 
