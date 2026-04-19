@@ -1284,7 +1284,7 @@ function renderMyKeys() {
         btn.onclick = () => showResult(myKeys[+btn.dataset.show]);
     });
     list.querySelectorAll('[data-del]').forEach(btn => {
-        btn.onclick = () => deleteMyKey(myKeys[+btn.dataset.del].username);
+        btn.onclick = () => deleteMyKey(myKeys[+btn.dataset.del]);
     });
     list.querySelectorAll('[data-replace]').forEach(btn => {
         btn.onclick = () => {
@@ -1295,14 +1295,14 @@ function renderMyKeys() {
     });
 }
 
-async function deleteMyKey(username) {
-    if (!confirm(`Удалить ключ "${username}"? Подключение перестанет работать.`)) return;
+async function deleteMyKey(key) {
+    if (!confirm(`Удалить ключ "${key.username}" (${key.server_name})? Подключение перестанет работать.`)) return;
 
     try {
         const res = await fetch(`${API_URL}/api/my-keys/delete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: sessionToken, username })
+            body: JSON.stringify({ token: sessionToken, uuid: key.uuid, username: key.username })
         });
         const data = await res.json();
         if (res.ok && data.ok) {

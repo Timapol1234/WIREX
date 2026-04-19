@@ -833,6 +833,7 @@ def build_key_data(user):
     vless_url = build_vless_url(user["uuid"], server_key, f"VPN-{username}")
     sub_url = f"http://{SUB_HOST}/sub/{sub_slug(username, user['uuid'])}"
     data = {
+        "uuid": user["uuid"],
         "username": username,
         "server": server_key,
         "server_name": s["name"],
@@ -932,6 +933,7 @@ def my_keys():
 def delete_my_key():
     data = request.json or {}
     token = data.get("token", "")
+    key_uuid = (data.get("uuid") or "").strip()
     username = data.get("username", "")
 
     session = get_session(token)
@@ -939,7 +941,10 @@ def delete_my_key():
         return jsonify({"error": "Сессия истекла"}), 401
 
     users = load_users()
-    user = next((u for u in users if u["username"].lower() == username.lower()), None)
+    if key_uuid:
+        user = next((u for u in users if u["uuid"] == key_uuid), None)
+    else:
+        user = next((u for u in users if u["username"].lower() == username.lower()), None)
     if not user:
         return jsonify({"error": "Ключ не найден"}), 404
 
