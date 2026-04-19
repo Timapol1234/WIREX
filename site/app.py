@@ -11,6 +11,7 @@ import secrets
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -582,6 +583,125 @@ def query_xray_stats(server_key):
         elif direction == "downlink":
             bucket["down"] = value
     return result
+
+_SERVER_METRICS_CACHE = {"ts": 0, "data": None}
+_SERVER_METRICS_TTL = 30  # секунд
+
+
+def collect_server_metrics(server_key):
+    """Снимает метрики с одного сервера одним SSH round-trip. Возвращает dict с online/online_reason и полями."""
+    s = SERVERS[server_key]
+    config_path = s["xray_config"]
+    script = (
+        "import json, subprocess, re\n"
+        "out = {}\n"
+        "try:\n"
+        "    with open('/proc/uptime') as f: out['uptime_sec'] = float(f.read().split()[0])\n"
+        "except Exception: pass\n"
+        "try:\n"
+        "    with open('/proc/loadavg') as f: p = f.read().split()\n"
+        "    out['load_1m'] = float(p[0]); out['load_5m'] = float(p[1]); out['load_15m'] = float(p[2])\n"
+        "except Exception: pass\n"
+        "try:\n"
+        "    import multiprocessing; out['cpu_count'] = multiprocessing.cpu_count()\n"
+        "except Exception: pass\n"
+        "try:\n"
+        "    mem = {}\n"
+        "    with open('/proc/meminfo') as f:\n"
+        "        for line in f:\n"
+        "            k, _, v = line.partition(':')\n"
+        "            mem[k.strip()] = int(v.strip().split()[0]) * 1024\n"
+        "    out['mem_total'] = mem.get('MemTotal', 0)\n"
+        "    out['mem_available'] = mem.get('MemAvailable', 0)\n"
+        "    out['mem_used'] = out['mem_total'] - out['mem_available']\n"
+        "except Exception: pass\n"
+        "try:\n"
+        "    rx = 0; tx = 0\n"
+        "    with open('/proc/net/dev') as f: lines = f.read().splitlines()\n"
+        "    for line in lines[2:]:\n"
+        "        parts = line.split()\n"
+        "        if not parts: continue\n"
+        "        iface = parts[0].rstrip(':')\n"
+        "        if iface == 'lo' or iface.startswith(('docker','veth','br-','tun','tap')): continue\n"
+        "        rx += int(parts[1]); tx += int(parts[9])\n"
+        "    out['net_rx'] = rx; out['net_tx'] = tx\n"
+        "except Exception: pass\n"
+        "try:\n"
+        "    r = subprocess.run(['xray','version'], capture_output=True, text=True, timeout=3)\n"
+        "    first = (r.stdout or '').splitlines()[0] if r.stdout else ''\n"
+        "    m = re.search(r'(\\d+\\.\\d+\\.\\d+)', first)\n"
+        "    out['xray_version'] = m.group(1) if m else (first.strip() or None)\n"
+        "except Exception: out['xray_version'] = None\n"
+        "try:\n"
+        "    r = subprocess.run(['systemctl','is-active','xray'], capture_output=True, text=True, timeout=3)\n"
+        "    out['xray_active'] = (r.stdout.strip() == 'active')\n"
+        "except Exception: out['xray_active'] = None\n"
+        "try:\n"
+        f"    with open({config_path!r}) as f: c = json.load(f)\n"
+        "    ib = next(i for i in c['inbounds'] if i.get('protocol') == 'vless')\n"
+        "    out['xray_clients'] = len(ib['settings']['clients'])\n"
+        "    out['xray_port'] = ib.get('port')\n"
+        "except Exception: out['xray_clients'] = None\n"
+        "print(json.dumps(out))\n"
+    )
+    t_start = time.time()
+    try:
+        if s.get("remote"):
+            cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5", s["ssh"], "python3", "-"]
+        else:
+            cmd = ["python3", "-"]
+        r = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=12)
+        latency_ms = int((time.time() - t_start) * 1000)
+        if r.returncode != 0 or not r.stdout.strip():
+            return {"online": False, "online_reason": (r.stderr or "нет ответа").strip()[:200], "latency_ms": latency_ms}
+        metrics = json.loads(r.stdout)
+        metrics["online"] = True
+        metrics["latency_ms"] = latency_ms
+        return metrics
+    except subprocess.TimeoutExpired:
+        return {"online": False, "online_reason": "timeout", "latency_ms": int((time.time() - t_start) * 1000)}
+    except Exception as e:
+        return {"online": False, "online_reason": str(e)[:200], "latency_ms": int((time.time() - t_start) * 1000)}
+
+
+def get_servers_stats(force_refresh=False):
+    """Возвращает список с метриками по всем серверам. Кешируется на _SERVER_METRICS_TTL секунд."""
+    now = time.time()
+    if not force_refresh and _SERVER_METRICS_CACHE["data"] and (now - _SERVER_METRICS_CACHE["ts"] < _SERVER_METRICS_TTL):
+        return _SERVER_METRICS_CACHE["data"], True
+
+    users = load_users()
+    users_by_server = {}
+    for u in users:
+        srv = u.get("server")
+        if not srv: continue
+        b = users_by_server.setdefault(srv, {"total": 0, "active": 0})
+        b["total"] += 1
+        if u.get("in_xray"): b["active"] += 1
+
+    keys = list(SERVERS.keys())
+    with ThreadPoolExecutor(max_workers=max(1, len(keys))) as ex:
+        raw = list(ex.map(collect_server_metrics, keys))
+
+    result = []
+    for srv_key, metrics in zip(keys, raw):
+        s = SERVERS[srv_key]
+        counts = users_by_server.get(srv_key, {"total": 0, "active": 0})
+        result.append({
+            "key": srv_key,
+            "name": s["name"],
+            "flag": s["flag"],
+            "ip": s["ip"],
+            "port": s["port"],
+            "remote": s.get("remote", False),
+            "users_total": counts["total"],
+            "users_active": counts["active"],
+            **metrics,
+        })
+    _SERVER_METRICS_CACHE["ts"] = now
+    _SERVER_METRICS_CACHE["data"] = result
+    return result, False
+
 
 def sub_slug(username, user_uuid):
     """Имя файла подписки — <username>_<uuid8>. Уникально даже при одинаковых username."""
@@ -1320,6 +1440,20 @@ def admin_stats():
         "users": result,
         "total": len(users),
         "online_count": sum(1 for u in result if u["online"]),
+    })
+
+
+@app.route("/api/admin/servers-stats", methods=["POST"])
+def admin_servers_stats():
+    data, err = _require_admin()
+    if err: return err
+    force = bool(data.get("refresh"))
+    result, cached = get_servers_stats(force_refresh=force)
+    return jsonify({
+        "servers": result,
+        "cached": cached,
+        "cache_ttl": _SERVER_METRICS_TTL,
+        "ts": int(_SERVER_METRICS_CACHE["ts"]),
     })
 
 

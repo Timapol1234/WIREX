@@ -95,6 +95,7 @@
       <button class="tab-btn" data-tab="payments">Платежи <span id="payments-badge" class="ml-1 text-[10px] opacity-80"></span></button>
       <button class="tab-btn" data-tab="subs">Подписки</button>
       <button class="tab-btn" data-tab="promos">Промокоды</button>
+      <button class="tab-btn" data-tab="servers">Серверы</button>
     </div>
 
     <!-- USERS TABLE -->
@@ -250,6 +251,20 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- SERVERS -->
+    <div id="tab-servers" class="tab-panel hidden">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="font-headline text-xl font-bold">Серверы</h2>
+          <div id="servers-meta" class="text-xs text-[#a9abb3] mt-1">—</div>
+        </div>
+        <button id="servers-refresh-btn" class="btn-primary">Обновить</button>
+      </div>
+      <div id="servers-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="text-[#a9abb3] text-sm">Нажмите «Обновить», чтобы опросить серверы.</div>
       </div>
     </div>
 
@@ -591,13 +606,131 @@ document.getElementById('logout-btn').onclick = () => {
 };
 document.getElementById('search').addEventListener('input', renderUsers);
 
-// Tabs
+// Servers stats
+let serversLoadedOnce = false;
+
+function fmtUptime(sec) {
+  if (!sec) return '—';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}д ${h}ч`;
+  if (h > 0) return `${h}ч ${m}м`;
+  return `${m}м`;
+}
+
+function loadColor(load1m, cpu) {
+  if (!cpu || load1m == null) return '#a9abb3';
+  const ratio = load1m / cpu;
+  if (ratio < 0.6) return '#00eefc';
+  if (ratio < 1.0) return '#ffd166';
+  return '#ff716c';
+}
+
+function renderServers(servers, meta) {
+  const grid = document.getElementById('servers-grid');
+  const metaEl = document.getElementById('servers-meta');
+  if (metaEl) {
+    const when = meta.ts ? new Date(meta.ts * 1000).toLocaleTimeString('ru-RU') : '—';
+    metaEl.textContent = `Обновлено в ${when} · ${meta.cached ? 'из кеша' : 'свежо'} · TTL ${meta.cache_ttl}с`;
+  }
+  if (!servers.length) {
+    grid.innerHTML = '<div class="text-[#a9abb3]">Серверы не настроены.</div>';
+    return;
+  }
+  grid.innerHTML = servers.map(s => {
+    const online = s.online;
+    const statusColor = online ? '#00eefc' : '#ff716c';
+    const statusText = online ? 'Онлайн' : `Оффлайн${s.online_reason ? ' · ' + escapeHtml(s.online_reason) : ''}`;
+    const memUsedGb = s.mem_used ? (s.mem_used / 1073741824).toFixed(2) : null;
+    const memTotalGb = s.mem_total ? (s.mem_total / 1073741824).toFixed(2) : null;
+    const memPct = (s.mem_total && s.mem_used) ? Math.round((s.mem_used / s.mem_total) * 100) : null;
+    const xrayStatus = s.xray_active ? '<span class="text-[#00eefc]">active</span>' : (s.xray_active === false ? '<span class="text-[#ff716c]">stopped</span>' : '—');
+    return `
+      <div class="bg-[#161a21] rounded-2xl p-5 border border-[#22262f]">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <div class="text-2xl">${s.flag || ''} <span class="font-headline font-bold text-lg align-middle">${escapeHtml(s.name)}</span></div>
+            <div class="text-xs text-[#a9abb3] font-mono mt-1">${escapeHtml(s.ip)}:${s.port}${s.remote ? ' · SSH' : ' · local'}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs font-semibold" style="color:${statusColor}">${statusText}</div>
+            <div class="text-[10px] text-[#a9abb3] mt-1">${s.latency_ms != null ? s.latency_ms + ' мс' : ''}</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">Ключи</div>
+            <div class="font-semibold text-base">${s.users_active}/${s.users_total}</div>
+            <div class="text-[10px] text-[#a9abb3]">в Xray: ${s.xray_clients != null ? s.xray_clients : '—'}</div>
+          </div>
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">Xray</div>
+            <div class="font-semibold text-base">${escapeHtml(s.xray_version || '—')}</div>
+            <div class="text-[10px]">${xrayStatus} · порт ${s.xray_port || s.port}</div>
+          </div>
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">Load avg</div>
+            <div class="font-semibold text-base" style="color:${loadColor(s.load_1m, s.cpu_count)}">${s.load_1m != null ? s.load_1m.toFixed(2) : '—'}</div>
+            <div class="text-[10px] text-[#a9abb3]">5м ${s.load_5m != null ? s.load_5m.toFixed(2) : '—'} · 15м ${s.load_15m != null ? s.load_15m.toFixed(2) : '—'} · ${s.cpu_count || '?'} CPU</div>
+          </div>
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">RAM</div>
+            <div class="font-semibold text-base">${memPct != null ? memPct + '%' : '—'}</div>
+            <div class="text-[10px] text-[#a9abb3]">${memUsedGb || '—'} / ${memTotalGb || '—'} ГБ</div>
+          </div>
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">Трафик ↓</div>
+            <div class="font-semibold text-base">${s.net_rx != null ? fmtBytes(s.net_rx) : '—'}</div>
+            <div class="text-[10px] text-[#a9abb3]">с момента запуска</div>
+          </div>
+          <div class="bg-[#0b0e14] rounded-lg p-3">
+            <div class="text-[10px] text-[#a9abb3] uppercase">Трафик ↑</div>
+            <div class="font-semibold text-base">${s.net_tx != null ? fmtBytes(s.net_tx) : '—'}</div>
+            <div class="text-[10px] text-[#a9abb3]">uptime ${fmtUptime(s.uptime_sec)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadServers(forceRefresh) {
+  const btn = document.getElementById('servers-refresh-btn');
+  const grid = document.getElementById('servers-grid');
+  if (btn) { btn.disabled = true; btn.textContent = 'Опрашиваю...'; }
+  if (!serversLoadedOnce) grid.innerHTML = '<div class="text-[#a9abb3]">Опрашиваю серверы по SSH...</div>';
+  try {
+    const res = await fetch(`${API_URL}/api/admin/servers-stats`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass, refresh: !!forceRefresh })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      grid.innerHTML = `<div class="text-[#ff716c]">${escapeHtml(data.error || 'Ошибка загрузки')}</div>`;
+      return;
+    }
+    serversLoadedOnce = true;
+    renderServers(data.servers || [], data);
+  } catch (e) {
+    grid.innerHTML = `<div class="text-[#ff716c]">Ошибка соединения: ${escapeHtml(String(e))}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Обновить'; }
+  }
+}
+
+document.getElementById('servers-refresh-btn')?.addEventListener('click', () => loadServers(true));
+
+// Tabs (servers tab lazy-loads on first click)
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    if (btn.dataset.tab === 'servers' && !serversLoadedOnce) loadServers(false);
   };
 });
 
