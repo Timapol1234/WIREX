@@ -40,6 +40,8 @@ systemctl is-active vpn-site && echo "  vpn-site активен"
 
 echo ""
 echo ">>> 4. Запускаю install_hysteria.sh локально на Амстердаме"
+# Чистим старое iptables правило на 8443, если есть
+iptables -D INPUT -p udp --dport 8443 -j ACCEPT 2>/dev/null || true
 bash "$DEPLOY_DIR/site/install_hysteria.sh" 2>&1 | tail -20
 echo "  статус hysteria-server на amsterdam: $(systemctl is-active hysteria-server)"
 
@@ -54,9 +56,11 @@ for key in usa finland france; do
     scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
         "$DEPLOY_DIR/site/install_hysteria.sh" "root@$ip:/root/install_hysteria.sh"
 
-    # Запускаем installer (идемпотентный — подчистит корраптнутый блок,
-    # перезапишет конфиг в каноническом виде, перезапустит сервис)
-    ssh -n -o BatchMode=yes "root@$ip" 'bash /root/install_hysteria.sh 2>&1 | tail -20'
+    # Чистим старое iptables правило на 8443, если есть + запускаем installer
+    ssh -n -o BatchMode=yes "root@$ip" '
+        iptables -D INPUT -p udp --dport 8443 -j ACCEPT 2>/dev/null || true
+        bash /root/install_hysteria.sh 2>&1 | tail -20
+    '
 
     # Финальная проверка
     echo "  статус hysteria-server на $key:"

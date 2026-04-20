@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-PORT=8443
+PORT=443
 CONFIG_DIR=/etc/hysteria
 CERT=$CONFIG_DIR/cert.crt
 KEY=$CONFIG_DIR/private.key

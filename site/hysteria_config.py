@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 
 HYSTERIA_CONFIG = "/etc/hysteria/config.yaml"
 OBFS_FILE = "/etc/hysteria/.obfs_password"
-HYSTERIA_PORT = 8443
+HYSTERIA_PORT = 443
 HYSTERIA_SNI = "www.microsoft.com"
 USERS_BEGIN = "    # BYPASS-USERS-BEGIN"
 USERS_END = "    # BYPASS-USERS-END"
