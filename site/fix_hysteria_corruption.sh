@@ -28,8 +28,10 @@ cd "$DEPLOY_DIR"
 echo "  последний коммит: $(git log --oneline -1)"
 
 echo ""
-echo ">>> 2. Копирую hysteria_config.py в /opt/vpn-site/"
+echo ">>> 2. Копирую app.py + hysteria_config.py в /opt/vpn-site/"
+cp "$DEPLOY_DIR/site/app.py" /opt/vpn-site/app.py
 cp "$DEPLOY_DIR/site/hysteria_config.py" /opt/vpn-site/hysteria_config.py
+md5sum "$DEPLOY_DIR/site/app.py" /opt/vpn-site/app.py
 md5sum "$DEPLOY_DIR/site/hysteria_config.py" /opt/vpn-site/hysteria_config.py
 
 echo ""
@@ -37,6 +39,18 @@ echo ">>> 3. Рестарт vpn-site"
 systemctl restart vpn-site
 sleep 2
 systemctl is-active vpn-site && echo "  vpn-site активен"
+
+echo ""
+echo ">>> 3b. Проверка что /api/hy-auth поднялся (не 404)"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' \
+    -d '{"addr":"test","auth":"","tx":0}' \
+    http://127.0.0.1:8080/api/hy-auth)
+echo "  /api/hy-auth вернул HTTP $code (401 = endpoint жив, 404 = app.py не обновился)"
+if [ "$code" = "404" ]; then
+    echo "  !!! /api/hy-auth не найден. Проверь что свежий app.py скопировался."
+    exit 1
+fi
 
 echo ""
 echo ">>> 4. Запускаю install_hysteria.sh локально на Амстердаме"
