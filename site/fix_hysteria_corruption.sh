@@ -68,28 +68,33 @@ for key in usa finland france; do
 done
 
 echo ""
-echo ">>> 6. Проверка: есть ли дубликаты __seed__ в любом конфиге"
-FOUND_DUPES=0
+echo ">>> 6. Проверка: auth-блок во всех конфигах — http-колбэк"
+BAD=0
 
-# amsterdam — локально
-count=$(grep -c '__seed__' /etc/hysteria/config.yaml || echo "?")
-echo "  amsterdam: __seed__ встречается $count раз (должен быть 1)"
-if [ "$count" != "1" ]; then FOUND_DUPES=1; fi
+check_auth() {
+    local label="$1"
+    local cmd="$2"
+    local has_http has_userpass
+    has_http=$(eval "$cmd" | grep -c 'type: http' || true)
+    has_userpass=$(eval "$cmd" | grep -c 'type: userpass' || true)
+    if [ "$has_http" = "1" ] && [ "$has_userpass" = "0" ]; then
+        echo "  $label: auth=http (OK)"
+    else
+        echo "  $label: auth НЕ обновлён (http=$has_http userpass=$has_userpass)"
+        BAD=1
+    fi
+}
 
-# остальные — по ssh
+check_auth "amsterdam" "cat /etc/hysteria/config.yaml"
 for key in usa finland france; do
     ip="${SERVERS[$key]}"
-    count=$(ssh -n "root@$ip" "grep -c '__seed__' /etc/hysteria/config.yaml" || echo "?")
-    echo "  $key: __seed__ встречается $count раз (должен быть 1)"
-    if [ "$count" != "1" ]; then
-        FOUND_DUPES=1
-    fi
+    check_auth "$key" "ssh -n root@$ip cat /etc/hysteria/config.yaml"
 done
 
 echo ""
-if [ "$FOUND_DUPES" -eq 0 ]; then
-    echo "=== ВСЁ ОК: конфиги чистые, hysteria-server работает на всех серверах ==="
+if [ "$BAD" -eq 0 ]; then
+    echo "=== ВСЁ ОК: все серверы перешли на auth.type=http ==="
 else
-    echo "=== ВНИМАНИЕ: где-то остались дубликаты __seed__, проверь вручную ==="
+    echo "=== ВНИМАНИЕ: где-то остался старый auth-блок, проверь вручную ==="
     exit 1
 fi

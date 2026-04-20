@@ -356,6 +356,27 @@ def logout():
     revoke_session(token)
     return jsonify({"ok": True})
 
+
+@app.route('/api/hy-auth', methods=['POST'])
+def hy_auth():
+    """Колбэк авторизации от Hysteria (auth.type=http в конфиге сервера).
+    Hysteria шлёт {"addr": "...", "auth": "<password>", "tx": N}. Мы ищем юзера
+    с таким hysteria_password и у которого in_xray=True. Если нашёлся — 200 + id.
+    Иначе 401. Никаких сессий/токенов Flask — это отдельный канал."""
+    data = request.get_json(silent=True) or {}
+    pw = data.get("auth", "")
+    if not pw:
+        return jsonify({"ok": False}), 401
+    try:
+        users = load_users()
+    except Exception as e:
+        print(f"[hy-auth] load_users failed: {e}")
+        return jsonify({"ok": False}), 500
+    for u in users:
+        if u.get("hysteria_password") == pw and u.get("in_xray"):
+            return jsonify({"ok": True, "id": u.get("username", "")}), 200
+    return jsonify({"ok": False}), 401
+
 def load_users():
     if os.path.exists(USERS_DB):
         with open(USERS_DB, "r") as f:
@@ -500,27 +521,19 @@ def _hy_log(msg):
 
 
 def add_to_hysteria_safe(server_key, username):
-    """Добавляет юзера в Hysteria 2. Best-effort: при ошибке логирует и возвращает None.
-    Сервер VLESS от этого не страдает — Hy2 это отдельный протокол поверх."""
+    """Генерит hysteria-пароль. Конфиг на серверах больше не трогаем:
+    auth-state живёт в users.json и проверяется через /api/hy-auth."""
     try:
-        s = SERVERS[server_key]
-        password = hysteria_config.generate_password()
-        hysteria_config.add_user(s, username, password)
-        _hy_log(f"add_user({server_key}, {username}) OK")
-        return password
+        return hysteria_config.generate_password()
     except Exception as e:
-        _hy_log(f"add_user({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
-        _hy_log(traceback.format_exc())
+        _hy_log(f"generate_password({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
         return None
 
 
 def remove_from_hysteria_safe(server_key, username):
-    """Удаляет юзера из Hysteria. Best-effort."""
-    try:
-        s = SERVERS[server_key]
-        hysteria_config.remove_user(s, username)
-    except Exception as e:
-        _hy_log(f"remove_user({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
+    """No-op: достаточно выставить in_xray=False в users.json — /api/hy-auth
+    такого юзера уже не пропустит."""
+    return None
 
 
 def build_hysteria_url(server_key, username, password):
@@ -1428,12 +1441,6 @@ def _sync_user_xray_state(email):
                     hy_pw = add_to_hysteria_safe(server_key, username)
                     if hy_pw:
                         u["hysteria_password"] = hy_pw
-                else:
-                    # Пароль был — заново добавляем юзера на сервер Hy2 (старый пароль)
-                    try:
-                        hysteria_config.add_user(SERVERS[server_key], username, hy_pw)
-                    except Exception as e:
-                        print(f"[hysteria] restore {username} failed: {e}")
                 update_subscription(u["uuid"], server_key, username, hy_pw)
                 u["in_xray"] = True
                 changed = True
