@@ -22,7 +22,7 @@ UN=$(python3 -c "import json; print(json.load(open('/opt/vpn-site/users.json'))[
 echo "=== Последний юзер: $UN на $SERVER ($SERVER_IP) ==="
 echo ""
 
-ssh -n "root@$SERVER_IP" 'bash -s' <<'REMOTE_EOF'
+ssh -o BatchMode=yes "root@$SERVER_IP" bash <<'REMOTE_EOF'
 set -e
 echo "--- устанавливаю tcpdump ---"
 apt-get install -y tcpdump >/dev/null 2>&1 && echo "tcpdump установлен" || echo "tcpdump уже был"
@@ -60,7 +60,7 @@ echo "2..."
 sleep 2
 echo "0 — собираю данные"
 
-ssh -n "root@$SERVER_IP" 'bash -s' <<'REMOTE_EOF'
+ssh -o BatchMode=yes "root@$SERVER_IP" bash <<'REMOTE_EOF'
 set -uo pipefail
 
 echo ""
