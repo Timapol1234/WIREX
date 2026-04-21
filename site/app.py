@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 import sys
 import traceback
@@ -50,6 +51,19 @@ SESSION_TTL_DAYS = 30
 OTP_RESEND_COOLDOWN = 60
 # Юзер считается online, если трафик рос в последние N секунд
 ONLINE_THRESHOLD_SECONDS = 120
+
+# Название бренда в имени ключа (показывается в VPN-клиенте как Remarks).
+# При переименовании сервиса достаточно поменять здесь.
+BRAND_NAME = "BYPASS"
+
+
+def key_tag(server_key_or_obj, protocol: str) -> str:
+    """Имя ключа в клиенте: `<BRAND>-<Сервер>-<Protocol>`.
+    `protocol` — человекочитаемое: "Reality" / "Hysteria"."""
+    s = server_key_or_obj if isinstance(server_key_or_obj, dict) \
+        else SERVERS.get(server_key_or_obj, {})
+    name = (s.get("name") or "").strip() or "server"
+    return f"{BRAND_NAME}-{name}-{protocol}"
 
 # Домены одноразовых почт — блокируем регистрацию, чтобы не засоряли серверы.
 # Список основных публичных temp-mail сервисов; MX-домены тоже включены.
@@ -313,8 +327,10 @@ def _save_server_status(status):
 
 
 def _build_vless_for_server(user_uuid, server_key, username):
-    """Обёртка — чтобы можно было построить VLESS URL для произвольного сервера."""
-    return build_vless_url(user_uuid, server_key, f"VPN-{username}")
+    """Обёртка — чтобы можно было построить VLESS URL для произвольного сервера.
+    `username` больше не используется в имени ключа (новый формат:
+    BRAND-Server-Reality), но оставлен в сигнатуре ради совместимости с call-site'ами."""
+    return build_vless_url(user_uuid, server_key)
 
 
 def _write_subscription_raw(user, target_server_key, hy_only=False):
@@ -899,19 +915,23 @@ def build_hysteria_url(server_key, username, password):
     if not password:
         return None
     try:
-        return hysteria_config.build_uri(server_key, SERVERS[server_key], username, password)
+        tag = key_tag(server_key, "Hysteria")
+        return hysteria_config.build_uri(
+            server_key, SERVERS[server_key], username, password, name_tag=tag
+        )
     except Exception as e:
         _hy_log(f"build_uri({server_key}, {username}) FAILED: {type(e).__name__}: {e}")
         return None
 
 
-def build_vless_url(user_uuid, server_key, name):
+def build_vless_url(user_uuid, server_key, name=None):
     s = SERVERS[server_key]
+    tag = name if name else key_tag(s, "Reality")
     return (
         f"vless://{user_uuid}@{s['ip']}:{s['port']}"
         f"?encryption=none&type=tcp&security={s['security']}"
         f"&sni={s['sni']}&pbk={s['pbk']}&sid={s['sid']}"
-        f"&fp={s['fp']}&flow=#{name}"
+        f"&fp={s['fp']}&flow=#{quote(tag)}"
     )
 
 def generate_qr_base64(text):
@@ -1155,7 +1175,7 @@ def update_subscription(user_uuid, server_key, username, hysteria_password=None)
     """Пишет файл подписки. Если передан hysteria_password — добавляет hysteria2:// URL
     рядом с VLESS (клиент импортирует оба, выберет рабочий)."""
     os.makedirs(SUB_DIR, exist_ok=True)
-    urls = [build_vless_url(user_uuid, server_key, f"VPN-{username}")]
+    urls = [build_vless_url(user_uuid, server_key)]
     hy2 = build_hysteria_url(server_key, username, hysteria_password)
     if hy2:
         urls.append(hy2)
@@ -1209,7 +1229,7 @@ def build_key_data(user):
     server_key = user["server"]
     username = user["username"]
     s = SERVERS[server_key]
-    vless_url = build_vless_url(user["uuid"], server_key, f"VPN-{username}")
+    vless_url = build_vless_url(user["uuid"], server_key)
     sub_url = f"http://{SUB_HOST}/sub/{sub_slug(username, user['uuid'])}"
     data = {
         "uuid": user["uuid"],

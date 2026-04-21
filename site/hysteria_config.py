@@ -70,15 +70,19 @@ def remove_user(server: dict, username: str) -> bool:
 
 # --- URI и метаданные ---
 
-def build_uri(server_key: str, server: dict, username: str, password: str) -> str:
+def build_uri(server_key: str, server: dict, username: str, password: str,
+              name_tag: Optional[str] = None) -> str:
     """Строит hysteria2:// URI для клиента.
 
     Формат: hysteria2://<password>@<host>:<port>/?...  (без username перед ':').
     Так его парсит V2Box — он не поддерживает userpass-форму user:pass@host.
-    `username` в сигнатуру оставлен ради совместимости со старыми вызовами."""
+    `username` в сигнатуре оставлен ради совместимости со старыми вызовами.
+    `name_tag` — готовый Remarks для клиента (см. app.key_tag). Если None,
+    подставляется legacy-формат `BYPASS-<server name>`."""
     obfs_pw = get_obfs_password(server_key, server)
     host = server["ip"]
-    name_tag = server.get("name", "BYPASS")
+    if not name_tag:
+        name_tag = f"BYPASS-{server.get('name', 'server')}"
     params = [
         "obfs=salamander",
         f"obfs-password={quote(obfs_pw, safe='')}",
@@ -87,7 +91,7 @@ def build_uri(server_key: str, server: dict, username: str, password: str) -> st
     ]
     return (
         f"hysteria2://{quote(password, safe='')}@{host}:{HYSTERIA_PORT}"
-        f"/?{'&'.join(params)}#BYPASS-{quote(name_tag)}"
+        f"/?{'&'.join(params)}#{quote(name_tag)}"
     )
 
 
