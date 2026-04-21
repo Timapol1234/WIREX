@@ -41,15 +41,24 @@ mkdir -p /usr/local/etc/xray
 KEYS_FILE=/etc/xray/.reality_keys
 mkdir -p /etc/xray
 chmod 700 /etc/xray
+PRIV=""
+PBK=""
 if [ -f "$KEYS_FILE" ]; then
     echo "[2/5] Reality keypair уже есть, читаю из $KEYS_FILE" >&2
     PRIV=$(grep '^private:' "$KEYS_FILE" | awk '{print $2}')
     PBK=$(grep '^public:' "$KEYS_FILE" | awk '{print $2}')
-else
+fi
+if [ -z "$PRIV" ] || [ -z "$PBK" ]; then
     echo "[2/5] Генерирую Reality keypair..." >&2
+    rm -f "$KEYS_FILE"
     OUT=$(xray x25519)
     PRIV=$(echo "$OUT" | awk '/Private key:/ {print $3}')
     PBK=$(echo "$OUT"  | awk '/Public key:/  {print $3}')
+    if [ -z "$PRIV" ] || [ -z "$PBK" ]; then
+        echo "xray x25519 вернул пустые ключи — смотри вывод:" >&2
+        echo "$OUT" >&2
+        exit 1
+    fi
     echo "private: $PRIV"  > "$KEYS_FILE"
     echo "public:  $PBK"  >> "$KEYS_FILE"
     chmod 600 "$KEYS_FILE"
