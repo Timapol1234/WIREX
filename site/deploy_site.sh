@@ -22,10 +22,17 @@ cp "$DEPLOY_DIR/site/hysteria_config.py"  "$APP_DIR/hysteria_config.py"
 # install_*.sh нужны рядом с app.py — их раскидывает /api/admin/servers/add на новые серверы
 cp "$DEPLOY_DIR/site/install_hysteria.sh" "$APP_DIR/install_hysteria.sh"
 cp "$DEPLOY_DIR/site/install_xray.sh"     "$APP_DIR/install_xray.sh"
-chmod +x "$APP_DIR/install_hysteria.sh" "$APP_DIR/install_xray.sh"
+cp "$DEPLOY_DIR/site/backup.sh"           "$APP_DIR/backup.sh"
+chmod +x "$APP_DIR/install_hysteria.sh" "$APP_DIR/install_xray.sh" "$APP_DIR/backup.sh"
 mkdir -p "$APP_DIR/static"
 cp "$DEPLOY_DIR/site/index.html"          "$APP_DIR/static/index.html"
 cp "$DEPLOY_DIR/site/admin.html"          "$APP_DIR/static/admin.html"
+
+echo ""
+echo ">>> 2b. Ставлю cron на ежедневный бэкап (04:00)"
+CRON_LINE="0 4 * * * /opt/vpn-site/backup.sh >> /var/log/vpn-site-backup.log 2>&1"
+( crontab -l 2>/dev/null | grep -v '/opt/vpn-site/backup.sh' ; echo "$CRON_LINE" ) | crontab -
+echo "  cron установлен: $CRON_LINE"
 
 echo ""
 echo ">>> 3. Рестарт vpn-site"

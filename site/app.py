@@ -51,6 +51,40 @@ OTP_RESEND_COOLDOWN = 60
 # Юзер считается online, если трафик рос в последние N секунд
 ONLINE_THRESHOLD_SECONDS = 120
 
+# Домены одноразовых почт — блокируем регистрацию, чтобы не засоряли серверы.
+# Список основных публичных temp-mail сервисов; MX-домены тоже включены.
+DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "guerrillamail.net", "guerrillamail.org",
+    "guerrillamail.biz", "guerrillamail.de", "sharklasers.com", "grr.la",
+    "10minutemail.com", "10minutemail.net", "20minutemail.com", "30minutemail.com",
+    "tempmail.com", "temp-mail.org", "temp-mail.ru", "tempmail.io", "tempmail.net",
+    "tempmailaddress.com", "tempmail.email", "tempmail.dev", "tempmailo.com",
+    "trashmail.com", "trashmail.net", "trashmail.de", "trashmail.io",
+    "getnada.com", "nada.email", "getairmail.com", "dispostable.com",
+    "yopmail.com", "yopmail.fr", "yopmail.net", "yopmail.org",
+    "maildrop.cc", "mintemail.com", "mohmal.com", "moakt.com", "mytemp.email",
+    "throwawaymail.com", "throwaway.email", "fakeinbox.com", "fakemailgenerator.com",
+    "mailnesia.com", "mailcatch.com", "mailbox.org", "mail.tm", "vuxvux.ru",
+    "emailondeck.com", "email-fake.com", "fake-email.com", "dropmail.me",
+    "inboxbear.com", "inboxkitten.com", "harakirimail.com", "spambox.us",
+    "spam4.me", "spambog.com", "spambog.ru", "spambog.de",
+    "mailsac.com", "mail7.io", "linshiyouxiang.net", "tmail.ws",
+    "mvrht.net", "armyspy.com", "cuvox.de", "einrot.com", "fleckens.hu",
+    "gustr.com", "jourrapide.com", "rhyta.com", "superrito.com", "teleworm.us",
+    "dayrep.com", "byom.de", "spambog.net", "luxusmail.org",
+    "1secmail.com", "1secmail.net", "1secmail.org", "esiix.com", "wwjmp.com",
+    "getairmail.com", "my10minutemail.com", "minutemail.com", "burnermail.io",
+    "anonaddy.me", "relay.firefox.com", "duck.com",
+}
+
+
+def is_disposable_email(email: str) -> bool:
+    try:
+        domain = email.rsplit("@", 1)[1].strip().lower()
+    except IndexError:
+        return False
+    return domain in DISPOSABLE_EMAIL_DOMAINS
+
 
 def load_secrets():
     """Загружает секреты из /opt/vpn-site/secrets.json.
@@ -588,6 +622,9 @@ def send_code():
 
     if not email or not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         return jsonify({"error": "Введите корректный email"}), 400
+
+    if is_disposable_email(email):
+        return jsonify({"error": "Одноразовые email-адреса не поддерживаются. Используйте постоянный email."}), 400
 
     codes = load_verification_codes()
     existing = codes.get(email)
