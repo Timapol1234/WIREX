@@ -83,10 +83,12 @@ ALERTS_LOG_MAX = 200
 ALERT_LOAD_RATIO = 2.0   # load_1m / cpu_count > 2.0 → перегруз
 ALERT_MEM_PCT = 90       # mem_used / mem_total > 90% → тревога
 
-# 4 сервера с правильными параметрами
-SERVERS = {
+# Seed-конфиг серверов. Рантайм-правки (add_server/remove_server, backup_for, max_users,
+# disabled) лежат в SERVERS_FILE и накладываются поверх при старте — см. load_servers_store().
+_SEED_SERVERS = {
     "amsterdam": {
         "name": "Амстердам",
+        "country": "NL",
         "flag": "🇳🇱",
         "ip": "109.248.162.180",
         "port": 443,
@@ -97,10 +99,11 @@ SERVERS = {
         "fp": "chrome",
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": False,
-        "max_users": 30
+        "bandwidth_mbps": 50,
     },
     "usa": {
         "name": "США",
+        "country": "US",
         "flag": "🇺🇸",
         "ip": "31.56.229.94",
         "port": 443,
@@ -112,10 +115,11 @@ SERVERS = {
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
         "ssh": "root@31.56.229.94",
-        "max_users": 30
+        "bandwidth_mbps": 50,
     },
     "finland": {
         "name": "Финляндия",
+        "country": "FI",
         "flag": "🇫🇮",
         "ip": "109.248.161.20",
         "port": 443,
@@ -127,10 +131,11 @@ SERVERS = {
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
         "ssh": "root@109.248.161.20",
-        "max_users": 30
+        "bandwidth_mbps": 50,
     },
     "france": {
         "name": "Франция",
+        "country": "FR",
         "flag": "🇫🇷",
         "ip": "45.38.23.141",
         "port": 443,
@@ -142,11 +147,274 @@ SERVERS = {
         "xray_config": "/usr/local/etc/xray/config.json",
         "remote": True,
         "ssh": "root@45.38.23.141",
-        "max_users": 30
+        "bandwidth_mbps": 50,
     }
 }
 
+SERVERS_FILE = "/opt/vpn-site/servers.json"
+SERVER_STATUS_FILE = "/opt/vpn-site/server_status.json"
+_servers_lock = threading.Lock()
+
+
+def load_servers_store():
+    """Читает /opt/vpn-site/servers.json. Формат:
+      {"servers": {<key>: {<field>: <value>, ...}, ...},
+       "deleted": [<key>, ...]}
+    Если файла нет — {}. Мы только читаем, не мержим с _SEED — это делает build_servers().
+    """
+    if not os.path.exists(SERVERS_FILE):
+        return {"servers": {}, "deleted": []}
+    try:
+        with open(SERVERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            data.setdefault("servers", {})
+            data.setdefault("deleted", [])
+            return data
+    except Exception as e:
+        print(f"[servers] load failed: {e}")
+        return {"servers": {}, "deleted": []}
+
+
+def save_servers_store(store):
+    os.makedirs(os.path.dirname(SERVERS_FILE), exist_ok=True)
+    with open(SERVERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(store, f, indent=2, ensure_ascii=False)
+
+
+def build_servers():
+    """Собирает итоговый SERVERS-dict: seed + overrides из servers.json,
+    минус те ключи, что перечислены в store['deleted']."""
+    store = load_servers_store()
+    overrides = store.get("servers", {}) or {}
+    deleted = set(store.get("deleted", []) or [])
+    result = {}
+    for key, cfg in _SEED_SERVERS.items():
+        if key in deleted:
+            continue
+        merged = dict(cfg)
+        if key in overrides:
+            merged.update(overrides[key])
+        result[key] = merged
+    # новые сервера, добавленные через админку, живут только в overrides
+    for key, cfg in overrides.items():
+        if key in _SEED_SERVERS or key in deleted:
+            continue
+        result[key] = dict(cfg)
+    return result
+
+
+SERVERS = build_servers()
+
+
+def reload_servers():
+    """Пересобирает SERVERS из seed+servers.json. Вызывается после admin-изменений."""
+    global SERVERS
+    with _servers_lock:
+        SERVERS = build_servers()
+    return SERVERS
+
+
 DEFAULT_MAX_USERS = 30
+# Расчёт ёмкости: bandwidth_mbps ÷ пиковый трафик на юзера ÷ доля одновременно активных.
+# Для 50 Мбит/с: 50 / 5 / 0.3 ≈ 33 юзера; для 1 Гбит/с: 1000 / 5 / 0.3 ≈ 666.
+CAPACITY_PEAK_MBPS = 5
+CAPACITY_CONCURRENCY = 0.3
+
+
+def compute_max_users(bandwidth_mbps):
+    if not bandwidth_mbps or bandwidth_mbps <= 0:
+        return DEFAULT_MAX_USERS
+    return max(1, int(bandwidth_mbps / CAPACITY_PEAK_MBPS / CAPACITY_CONCURRENCY))
+
+
+def capacity_for_server(s):
+    """max_users сервера: override из конфига, иначе формула от bandwidth_mbps."""
+    override = s.get("max_users")
+    if isinstance(override, (int, float)) and override > 0:
+        return int(override)
+    return compute_max_users(s.get("bandwidth_mbps"))
+
+
+# ---- Health-check + failover (Phase 3c) ----
+import socket as _socket
+
+HEALTH_CHECK_INTERVAL_SEC = 120   # 2 минуты между проверками
+HEALTH_FAIL_THRESHOLD = 3         # 3 подряд фэйла = сервер упал (6 мин)
+HEALTH_OK_THRESHOLD = 2           # 2 подряд ok = восстановился (4 мин)
+HEALTH_TCP_TIMEOUT = 5
+
+
+def probe_server_alive(server_cfg):
+    """TCP-коннект на tcp/port сервера. True/False. Хватит для Xray-инбаунда;
+    Hysteria слушает UDP — он отдельно валидируется чеком systemctl-метрик,
+    но для MVP failover достаточно TCP 443, т.к. оба сервиса обычно падают вместе
+    (это bare-metal box, если QUIC упал — Xray тоже скорее всего не ответит)."""
+    ip = server_cfg.get("ip")
+    port = int(server_cfg.get("port") or 443)
+    if not ip:
+        return False
+    try:
+        with _socket.create_connection((ip, port), timeout=HEALTH_TCP_TIMEOUT):
+            return True
+    except Exception:
+        return False
+
+
+def _find_backup_for(primary_key):
+    """Ищем сервер, у которого backup_for == primary_key. Возвращаем ключ или None."""
+    for k, cfg in SERVERS.items():
+        if k == primary_key: continue
+        if cfg.get("disabled"): continue
+        if cfg.get("backup_for") == primary_key:
+            return k
+    return None
+
+
+def _load_server_status():
+    return _load_json(SERVER_STATUS_FILE, {})
+
+
+def _save_server_status(status):
+    _save_json(SERVER_STATUS_FILE, status)
+
+
+def _build_vless_for_server(user_uuid, server_key, username):
+    """Обёртка — чтобы можно было построить VLESS URL для произвольного сервера."""
+    return build_vless_url(user_uuid, server_key, f"VPN-{username}")
+
+
+def _write_subscription_raw(user, target_server_key, hy_only=False):
+    """Пишет файл подписки user'а, но с URL'ами, указывающими на target_server_key.
+    Если hy_only=True — только hysteria2:// (для failover; VLESS UUID не
+    зарегистрирован на backup xray, поэтому VLESS туда слать нельзя)."""
+    user_uuid = user["uuid"]
+    username = user["username"]
+    hy_pw = user.get("hysteria_password")
+    urls = []
+    if not hy_only:
+        urls.append(_build_vless_for_server(user_uuid, target_server_key, username))
+    if hy_pw:
+        hy = build_hysteria_url(target_server_key, username, hy_pw)
+        if hy: urls.append(hy)
+    if not urls:
+        return False
+    encoded = base64.b64encode("\n".join(urls).encode()).decode()
+    os.makedirs(SUB_DIR, exist_ok=True)
+    filepath = os.path.join(SUB_DIR, sub_slug(username, user_uuid))
+    with open(filepath, "w") as f:
+        f.write(encoded)
+    return True
+
+
+def _failover_activate(primary_key, backup_key):
+    """Для всех юзеров на primary_key переписываем /var/www/sub/<slug> так,
+    чтобы subscription указывала на backup_key (только hysteria2://, т.к.
+    VLESS UUID не зарегистрирован на backup xray)."""
+    users = load_users()
+    affected = 0
+    for u in users:
+        if u.get("server") != primary_key: continue
+        try:
+            if _write_subscription_raw(u, backup_key, hy_only=True):
+                affected += 1
+        except Exception as e:
+            print(f"[failover] rewrite sub failed for {u.get('username')}: {e}")
+    print(f"[failover] {primary_key} → {backup_key}: переписано {affected} подписок")
+    return affected
+
+
+def _failover_deactivate(primary_key):
+    """Возвращаем подписки юзеров с primary_key на нормальный вид (VLESS+Hy2 на primary)."""
+    users = load_users()
+    restored = 0
+    for u in users:
+        if u.get("server") != primary_key: continue
+        try:
+            update_subscription(u["uuid"], primary_key, u["username"], u.get("hysteria_password"))
+            restored += 1
+        except Exception as e:
+            print(f"[failover] restore sub failed for {u.get('username')}: {e}")
+    print(f"[failover] {primary_key} восстановлен: {restored} подписок вернули на primary")
+    return restored
+
+
+def _health_tick():
+    """Один прогон: опрашивает все не-disabled сервера, обновляет счётчики,
+    переключает failover при пересечении порогов."""
+    status = _load_server_status()
+    now = int(time.time())
+    current_servers = dict(SERVERS)  # snapshot
+    for key, cfg in current_servers.items():
+        if cfg.get("disabled"): continue
+        st = status.setdefault(key, {
+            "ok_count": 0, "fail_count": 0, "failed_over": False,
+            "failover_to": None, "last_check_ts": 0, "last_ok_ts": 0,
+        })
+        alive = probe_server_alive(cfg)
+        st["last_check_ts"] = now
+        if alive:
+            st["ok_count"] += 1
+            st["fail_count"] = 0
+            st["last_ok_ts"] = now
+            # Восстановление
+            if st["failed_over"] and st["ok_count"] >= HEALTH_OK_THRESHOLD:
+                _failover_deactivate(key)
+                st["failed_over"] = False
+                st["failover_to"] = None
+                _admin_notify_failover(key, recovered=True)
+        else:
+            st["fail_count"] += 1
+            st["ok_count"] = 0
+            # Активация failover
+            if not st["failed_over"] and st["fail_count"] >= HEALTH_FAIL_THRESHOLD:
+                backup_key = _find_backup_for(key)
+                if backup_key and probe_server_alive(SERVERS[backup_key]):
+                    _failover_activate(key, backup_key)
+                    st["failed_over"] = True
+                    st["failover_to"] = backup_key
+                    _admin_notify_failover(key, backup=backup_key)
+                else:
+                    # Резерва нет или он тоже лежит — только уведомляем админа
+                    _admin_notify_failover(key, backup=None)
+    _save_server_status(status)
+
+
+def _admin_notify_failover(primary_key, backup=None, recovered=False):
+    """Шлёт админу email. Дедуп — по маркеру в ALERTS_STATE_FILE, чтобы не спамить."""
+    state = _load_json(ALERTS_STATE_FILE, {})
+    marker_key = f"failover:{primary_key}:{'recovered' if recovered else (backup or 'no-backup')}"
+    last = state.get(marker_key, 0)
+    if int(time.time()) - last < ALERTS_COOLDOWN_SEC:
+        return
+    state[marker_key] = int(time.time())
+    _save_json(ALERTS_STATE_FILE, state)
+
+    if recovered:
+        subject = f"[BYPASS] Сервер {primary_key} восстановлен"
+        body = f"<p>Сервер <b>{primary_key}</b> снова отвечает. Подписки юзеров возвращены на primary.</p>"
+    elif backup:
+        subject = f"[BYPASS] Failover: {primary_key} → {backup}"
+        body = (f"<p>Сервер <b>{primary_key}</b> не отвечает ≥{HEALTH_FAIL_THRESHOLD * HEALTH_CHECK_INTERVAL_SEC // 60} мин.</p>"
+                f"<p>Подписки юзеров переписаны на <b>{backup}</b> (только Hysteria 2, "
+                f"VLESS UUID не зарегистрированы на резерве).</p>")
+    else:
+        subject = f"[BYPASS] Сервер {primary_key} не отвечает, резерв не настроен"
+        body = (f"<p>Сервер <b>{primary_key}</b> не отвечает, а в servers.json у него нет "
+                f"резерва (backup_for). Юзеры без связи.</p>")
+    send_admin_email(subject, body)
+
+
+def _health_worker():
+    """Фоновый поток — тикает каждые HEALTH_CHECK_INTERVAL_SEC."""
+    time.sleep(30)  # дать Flask'у поднять сокеты
+    while True:
+        try:
+            _health_tick()
+        except Exception as e:
+            print(f"[health] tick error: {e}")
+            traceback.print_exc()
+        time.sleep(HEALTH_CHECK_INTERVAL_SEC)
+
 
 ADMIN_PASSWORD = _secrets.get("admin_password", "")
 
@@ -828,8 +1096,12 @@ def get_servers_stats(force_refresh=False):
             "remote": s.get("remote", False),
             "users_total": counts["total"],
             "users_active": counts["active"],
-            "max_users": s.get("max_users", DEFAULT_MAX_USERS),
-            "full": counts["total"] >= s.get("max_users", DEFAULT_MAX_USERS),
+            "max_users": capacity_for_server(s),
+            "bandwidth_mbps": s.get("bandwidth_mbps"),
+            "country": s.get("country"),
+            "backup_for": s.get("backup_for"),
+            "disabled": bool(s.get("disabled")),
+            "full": counts["total"] >= capacity_for_server(s),
             **metrics,
         })
     _SERVER_METRICS_CACHE["ts"] = now
@@ -877,13 +1149,17 @@ def get_servers():
         if srv: counts[srv] = counts.get(srv, 0) + 1
     result = {}
     for key, s in SERVERS.items():
-        max_users = s.get("max_users", DEFAULT_MAX_USERS)
+        if s.get("disabled"):
+            continue
+        max_users = capacity_for_server(s)
         cnt = counts.get(key, 0)
         result[key] = {
             "name": s["name"],
             "flag": s["flag"],
             "ip": s["ip"],
             "port": s["port"],
+            "country": s.get("country"),
+            "bandwidth_mbps": s.get("bandwidth_mbps"),
             "users_count": cnt,
             "max_users": max_users,
             "full": cnt >= max_users
@@ -947,7 +1223,7 @@ def create_key():
     if any((u.get("email") or "").lower() == email_lc and u.get("server") == server_key for u in users):
         return jsonify({"error": "У вас уже есть ключ на этом сервере. Замените его, чтобы пересоздать.", "code": "key_exists_on_server"}), 409
 
-    max_users = SERVERS[server_key].get("max_users", DEFAULT_MAX_USERS)
+    max_users = capacity_for_server(SERVERS[server_key])
     server_user_count = sum(1 for u in users if u.get("server") == server_key)
     if server_user_count >= max_users:
         return jsonify({"error": "Этот сервер заполнен. Выберите другой.", "code": "server_full"}), 409
@@ -1074,7 +1350,7 @@ def replace_my_key():
 
     # Проверка лимита: только если меняем сервер (иначе число ключей на сервере не растёт)
     if not old or old.get("server") != server_key:
-        max_users = SERVERS[server_key].get("max_users", DEFAULT_MAX_USERS)
+        max_users = capacity_for_server(SERVERS[server_key])
         server_user_count = sum(1 for u in users if u.get("server") == server_key)
         if server_user_count >= max_users:
             return jsonify({"error": "Этот сервер заполнен. Выберите другой.", "code": "server_full"}), 409
@@ -1696,6 +1972,297 @@ def admin_backups_list():
     return jsonify({"backups": items, "dir": BACKUP_DIR})
 
 
+# ---------- Управление серверами (Phase 3b) ----------
+# Предполагается, что SSH-ключ root@amsterdam уже добавлен в authorized_keys
+# нового сервера при его провиженинге у хостера. Мы не просим пароль у админа.
+
+SITE_DIR = os.path.dirname(os.path.abspath(__file__))
+INSTALL_XRAY_SH = os.path.join(SITE_DIR, "install_xray.sh")
+INSTALL_HYSTERIA_SH = os.path.join(SITE_DIR, "install_hysteria.sh")
+
+
+def _gen_server_key(country_code, existing_keys):
+    """Генерит уникальный slug по коду страны: nl, nl2, nl3..."""
+    cc = (country_code or "xx").lower()[:2]
+    if cc and cc not in existing_keys:
+        return cc
+    for i in range(2, 100):
+        k = f"{cc}{i}"
+        if k not in existing_keys:
+            return k
+    return f"srv{secrets.token_hex(3)}"
+
+
+def _ssh_probe(ip, user="root", timeout=8):
+    """Пробует SSH-коннект. Возвращает (ok: bool, error: str)."""
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+             "-o", f"ConnectTimeout={timeout}", f"{user}@{ip}", "echo ok"],
+            capture_output=True, text=True, timeout=timeout + 5,
+        )
+        if r.returncode == 0 and "ok" in r.stdout:
+            return True, ""
+        return False, (r.stderr or "нет ответа").strip()[:400]
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except Exception as e:
+        return False, str(e)[:400]
+
+
+def _scp_and_run(ip, user, local_script, remote_path, timeout=180):
+    """Копирует скрипт на сервер и запускает его. Возвращает (rc, stdout, stderr)."""
+    scp = subprocess.run(
+        ["scp", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+         local_script, f"{user}@{ip}:{remote_path}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if scp.returncode != 0:
+        return scp.returncode, "", f"scp failed: {scp.stderr.strip()}"
+    run = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+         f"{user}@{ip}", f"bash {remote_path}"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    return run.returncode, run.stdout, run.stderr
+
+
+@app.route("/api/admin/servers/list", methods=["POST"])
+def admin_servers_list():
+    """Возвращает все сервера (seed + overrides) + их статус из server_status.json."""
+    data, err = _require_admin()
+    if err: return err
+    store = load_servers_store()
+    status = _load_json(SERVER_STATUS_FILE, {})
+    users = load_users()
+    counts = {}
+    for u in users:
+        srv = u.get("server")
+        if srv: counts[srv] = counts.get(srv, 0) + 1
+    items = []
+    for key, cfg in SERVERS.items():
+        items.append({
+            "key": key,
+            "name": cfg.get("name"),
+            "flag": cfg.get("flag"),
+            "country": cfg.get("country"),
+            "ip": cfg.get("ip"),
+            "port": cfg.get("port"),
+            "remote": cfg.get("remote", True),
+            "bandwidth_mbps": cfg.get("bandwidth_mbps"),
+            "max_users": capacity_for_server(cfg),
+            "backup_for": cfg.get("backup_for"),
+            "disabled": bool(cfg.get("disabled")),
+            "users_count": counts.get(key, 0),
+            "from_seed": key in _SEED_SERVERS,
+            "status": status.get(key, {}),
+        })
+    items.sort(key=lambda x: (x["country"] or "zz", x["key"]))
+    return jsonify({
+        "servers": items,
+        "capacity_rule": {
+            "peak_mbps_per_user": CAPACITY_PEAK_MBPS,
+            "concurrency": CAPACITY_CONCURRENCY,
+        },
+    })
+
+
+@app.route("/api/admin/servers/add", methods=["POST"])
+def admin_servers_add():
+    """Добавляет сервер: проверяет SSH, ставит xray+hysteria, пишет в servers.json.
+
+    Вход: {password, ip, country, name, flag, bandwidth_mbps, ssh_user?, backup_for?}
+    SSH-ключ от Амстердама должен быть заранее прописан в ~/.ssh/authorized_keys на цели."""
+    data, err = _require_admin()
+    if err: return err
+
+    ip = (data.get("ip") or "").strip()
+    country = (data.get("country") or "").strip().upper()
+    name = (data.get("name") or "").strip()
+    flag = (data.get("flag") or "").strip()
+    ssh_user = (data.get("ssh_user") or "root").strip()
+    backup_for = (data.get("backup_for") or "").strip() or None
+    try:
+        bandwidth_mbps = int(data.get("bandwidth_mbps") or 50)
+    except Exception:
+        return jsonify({"error": "bandwidth_mbps должен быть целым числом"}), 400
+
+    if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+        return jsonify({"error": "IP имеет неверный формат"}), 400
+    if not country or not re.match(r"^[A-Z]{2}$", country):
+        return jsonify({"error": "country должен быть ISO-кодом из 2 букв (RU, NL, US...)"}), 400
+    if not name:
+        return jsonify({"error": "Укажи название (например, 'Германия')"}), 400
+    if bandwidth_mbps < 10:
+        return jsonify({"error": "bandwidth_mbps слишком мал (минимум 10)"}), 400
+
+    # Уникальность IP
+    for k, cfg in SERVERS.items():
+        if cfg.get("ip") == ip:
+            return jsonify({"error": f"Сервер с IP {ip} уже добавлен (key={k})"}), 409
+
+    if backup_for and backup_for not in SERVERS:
+        return jsonify({"error": f"backup_for={backup_for} — нет такого сервера"}), 400
+
+    # 1. SSH probe
+    ok, err_msg = _ssh_probe(ip, ssh_user, timeout=8)
+    if not ok:
+        return jsonify({
+            "error": f"SSH до {ssh_user}@{ip} не работает. Добавь публичный ключ Амстердама в authorized_keys.",
+            "ssh_error": err_msg,
+        }), 400
+
+    # 2. Установка Xray
+    if not os.path.isfile(INSTALL_XRAY_SH):
+        return jsonify({"error": f"Скрипт не найден: {INSTALL_XRAY_SH}"}), 500
+    rc, stdout, stderr = _scp_and_run(ip, ssh_user, INSTALL_XRAY_SH, "/root/install_xray.sh", timeout=240)
+    if rc != 0:
+        return jsonify({"error": "Установка xray не удалась", "stderr": stderr[-1500:], "stdout": stdout[-1500:]}), 500
+    m = re.search(r'\{"pbk":\s*"([^"]+)",\s*"sid":\s*"([^"]+)",\s*"sni":\s*"([^"]+)",\s*"port":\s*(\d+)\}', stdout)
+    if not m:
+        return jsonify({"error": "install_xray.sh не вернул JSON с ключами", "stdout": stdout[-2000:]}), 500
+    pbk, sid, sni, port = m.group(1), m.group(2), m.group(3), int(m.group(4))
+
+    # 3. Установка Hysteria
+    if not os.path.isfile(INSTALL_HYSTERIA_SH):
+        return jsonify({"error": f"Скрипт не найден: {INSTALL_HYSTERIA_SH}"}), 500
+    rc, stdout2, stderr2 = _scp_and_run(ip, ssh_user, INSTALL_HYSTERIA_SH, "/root/install_hysteria.sh", timeout=240)
+    if rc != 0:
+        return jsonify({"error": "Установка hysteria не удалась", "stderr": stderr2[-1500:], "stdout": stdout2[-1500:]}), 500
+
+    # 4. Пишем в servers.json
+    store = load_servers_store()
+    existing_keys = set(SERVERS.keys()) | set(store.get("servers", {}).keys())
+    new_key = _gen_server_key(country, existing_keys)
+
+    entry = {
+        "name": name,
+        "country": country,
+        "flag": flag or "🏳️",
+        "ip": ip,
+        "port": port,
+        "security": "reality",
+        "sni": sni,
+        "pbk": pbk,
+        "sid": sid,
+        "fp": "chrome",
+        "xray_config": "/usr/local/etc/xray/config.json",
+        "remote": True,
+        "ssh": f"{ssh_user}@{ip}",
+        "bandwidth_mbps": bandwidth_mbps,
+    }
+    if backup_for:
+        entry["backup_for"] = backup_for
+
+    store.setdefault("servers", {})[new_key] = entry
+    # на случай если этот key был в deleted — убираем
+    if new_key in (store.get("deleted") or []):
+        store["deleted"] = [k for k in store["deleted"] if k != new_key]
+    save_servers_store(store)
+    reload_servers()
+
+    return jsonify({
+        "ok": True,
+        "key": new_key,
+        "server": {**entry, "max_users": capacity_for_server(entry)},
+    })
+
+
+@app.route("/api/admin/servers/update", methods=["POST"])
+def admin_servers_update():
+    """Правит поля сервера. Вход: {password, key, bandwidth_mbps?, name?, flag?,
+    max_users?, backup_for?, disabled?}."""
+    data, err = _require_admin()
+    if err: return err
+
+    key = (data.get("key") or "").strip()
+    if key not in SERVERS:
+        return jsonify({"error": "Сервер не найден"}), 404
+
+    store = load_servers_store()
+    overrides = store.setdefault("servers", {})
+    patch = overrides.get(key, {})
+
+    for field in ("name", "flag", "country"):
+        if field in data and isinstance(data[field], str):
+            patch[field] = data[field].strip() or None
+    for field in ("bandwidth_mbps", "max_users"):
+        if field in data and data[field] is not None:
+            try:
+                v = int(data[field])
+                if v <= 0: raise ValueError
+                patch[field] = v
+            except Exception:
+                return jsonify({"error": f"{field}: нужен положительный int"}), 400
+    if "backup_for" in data:
+        bf = (data["backup_for"] or "").strip() or None
+        if bf and bf not in SERVERS:
+            return jsonify({"error": f"backup_for={bf} — нет такого сервера"}), 400
+        patch["backup_for"] = bf
+    if "disabled" in data:
+        patch["disabled"] = bool(data["disabled"])
+
+    overrides[key] = patch
+    save_servers_store(store)
+    reload_servers()
+    return jsonify({"ok": True, "server": {**SERVERS[key], "max_users": capacity_for_server(SERVERS[key])}})
+
+
+@app.route("/api/admin/servers/status", methods=["POST"])
+def admin_servers_status():
+    """Возвращает состояние health-checker'а: failover state, последний чек."""
+    _, err = _require_admin()
+    if err: return err
+    status = _load_server_status()
+    return jsonify({
+        "status": status,
+        "interval_sec": HEALTH_CHECK_INTERVAL_SEC,
+        "fail_threshold": HEALTH_FAIL_THRESHOLD,
+        "ok_threshold": HEALTH_OK_THRESHOLD,
+        "now": int(time.time()),
+    })
+
+
+@app.route("/api/admin/servers/failover-run", methods=["POST"])
+def admin_failover_run():
+    """Принудительный прогон health-check. Для отладки."""
+    _, err = _require_admin()
+    if err: return err
+    _health_tick()
+    return jsonify({"ok": True, "status": _load_server_status()})
+
+
+@app.route("/api/admin/servers/remove", methods=["POST"])
+def admin_servers_remove():
+    """Удаляет сервер. С force=true удалит даже при наличии юзеров (они останутся в users.json
+    со сломанным server — их надо будет потом подвигать руками через админку)."""
+    data, err = _require_admin()
+    if err: return err
+
+    key = (data.get("key") or "").strip()
+    force = bool(data.get("force"))
+    if key not in SERVERS:
+        return jsonify({"error": "Сервер не найден"}), 404
+
+    users = load_users()
+    active = [u for u in users if u.get("server") == key]
+    if active and not force:
+        return jsonify({
+            "error": f"На сервере {key} ещё {len(active)} юзер(ов). Передай force=true чтобы удалить всё равно.",
+            "users": len(active),
+        }), 409
+
+    store = load_servers_store()
+    store.setdefault("deleted", [])
+    if key not in store["deleted"]:
+        store["deleted"].append(key)
+    # если был в overrides — чистим чтобы не воскрес при следующем build_servers
+    store.setdefault("servers", {}).pop(key, None)
+    save_servers_store(store)
+    reload_servers()
+    return jsonify({"ok": True, "removed_key": key, "orphaned_users": len(active)})
+
+
 @app.route("/api/admin/backup-now", methods=["POST"])
 def admin_backup_now():
     """Запуск бэкапа вручную. Ничего не перезапускает — читает JSON и копирует."""
@@ -1984,4 +2551,6 @@ if __name__ == "__main__":
         ta.start()
     else:
         print("WARNING: admin_email не задан — алерты выключены")
+    th = threading.Thread(target=_health_worker, daemon=True)
+    th.start()
     app.run(host="0.0.0.0", port=8080)

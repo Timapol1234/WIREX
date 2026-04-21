@@ -263,10 +263,76 @@
           <h2 class="font-headline text-xl font-bold">Серверы</h2>
           <div id="servers-meta" class="text-xs text-[#a9abb3] mt-1">—</div>
         </div>
-        <button id="servers-refresh-btn" class="btn-primary">Обновить</button>
+        <div class="flex gap-2">
+          <button id="servers-refresh-btn" class="btn-primary">Обновить метрики</button>
+          <button id="servers-add-btn" class="btn-primary">+ Добавить сервер</button>
+        </div>
       </div>
+
+      <!-- Форма добавления сервера -->
+      <div id="server-add-form" class="hidden bg-[#0b0e14] border border-[#22262f] rounded-2xl p-4 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-headline font-semibold">Добавить сервер</h3>
+          <button id="server-add-close" class="text-[#a9abb3] hover:text-white text-sm">✕</button>
+        </div>
+        <div class="text-xs text-[#a9abb3] mb-3">
+          SSH-ключ Амстердама должен быть уже прописан в <code>~/.ssh/authorized_keys</code> на новом сервере.
+          Flask подключится, поставит xray+hysteria и добавит сервер в пул.
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">IP</span>
+            <input id="srv-ip" type="text" placeholder="1.2.3.4" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white font-mono">
+          </label>
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">SSH user</span>
+            <input id="srv-user" type="text" value="root" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white font-mono">
+          </label>
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">Страна (ISO 2)</span>
+            <input id="srv-country" type="text" placeholder="DE" maxlength="2" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white font-mono uppercase">
+          </label>
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">Название (для UI)</span>
+            <input id="srv-name" type="text" placeholder="Германия" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white">
+          </label>
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">Флаг (эмодзи)</span>
+            <input id="srv-flag" type="text" placeholder="🇩🇪" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white">
+          </label>
+          <label class="block">
+            <span class="text-[#a9abb3] text-xs">Bandwidth Мбит/с</span>
+            <input id="srv-bw" type="number" value="50" min="10" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white font-mono">
+          </label>
+          <label class="block md:col-span-2">
+            <span class="text-[#a9abb3] text-xs">Резервный для (опционально) — если этот сервер сдохнет, юзеров автоматически перебросят на выбранный</span>
+            <select id="srv-backup-for" class="w-full mt-1 px-3 py-2 rounded-lg bg-[#161a21] text-white">
+              <option value="">— не резерв —</option>
+            </select>
+          </label>
+        </div>
+        <div class="mt-3 flex items-center gap-3">
+          <button id="server-add-submit" class="btn-primary">Установить и добавить</button>
+          <div id="server-add-status" class="text-xs text-[#a9abb3]"></div>
+        </div>
+      </div>
+
+      <!-- Failover статус -->
+      <h3 class="font-headline font-semibold mb-3">Failover &amp; health-check</h3>
+      <div id="failover-status" class="bg-[#0b0e14] border border-[#22262f] rounded-lg p-3 mb-6 text-sm">
+        <div class="text-[#a9abb3]">Загружаю...</div>
+      </div>
+
+      <!-- Список всех серверов с editable полями -->
+      <h3 class="font-headline font-semibold mb-3">Пул серверов</h3>
+      <div id="servers-manage" class="grid grid-cols-1 gap-2 mb-6">
+        <div class="text-[#a9abb3] text-sm">Загружаю...</div>
+      </div>
+
+      <!-- Живые метрики (xray/hy2 статус, load, RAM) -->
+      <h3 class="font-headline font-semibold mb-3">Метрики по SSH</h3>
       <div id="servers-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="text-[#a9abb3] text-sm">Нажмите «Обновить», чтобы опросить серверы.</div>
+        <div class="text-[#a9abb3] text-sm">Нажмите «Обновить метрики».</div>
       </div>
     </div>
 
@@ -711,7 +777,7 @@ function renderServers(servers, meta) {
           <div class="bg-[#0b0e14] rounded-lg p-3">
             <div class="text-[10px] text-[#a9abb3] uppercase">Ключи</div>
             <div class="font-semibold text-base" style="color:${s.full ? '#ff716c' : 'inherit'}">${s.users_total}<span class="text-[#a9abb3] font-normal"> / ${s.max_users ?? '?'}</span></div>
-            <div class="text-[10px] text-[#a9abb3]">активных ${s.users_active} · Xray ${s.xray_clients != null ? s.xray_clients : '—'}${s.full ? ' · <span style="color:#ff716c">заполнен</span>' : ''}</div>
+            <div class="text-[10px] text-[#a9abb3]">активных ${s.users_active} · ${s.bandwidth_mbps ? s.bandwidth_mbps + ' Мбит/с' : 'bw n/a'}${s.full ? ' · <span style="color:#ff716c">заполнен</span>' : ''}</div>
           </div>
           <div class="bg-[#0b0e14] rounded-lg p-3">
             <div class="text-[10px] text-[#a9abb3] uppercase">Xray / Hy2</div>
@@ -973,6 +1039,218 @@ async function runBackupNow() {
 document.getElementById('backups-refresh-btn')?.addEventListener('click', loadBackups);
 document.getElementById('backup-now-btn')?.addEventListener('click', runBackupNow);
 
+// --- Server pool management (Phase 3b) ---
+
+async function loadFailoverStatus() {
+  const box = document.getElementById('failover-status');
+  if (!box) return;
+  try {
+    const res = await fetch(`${API_URL}/api/admin/servers/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      box.innerHTML = `<div class="text-[#ff716c]">${escapeHtml(data.error || 'Ошибка')}</div>`;
+      return;
+    }
+    const status = data.status || {};
+    const keys = Object.keys(status);
+    const meta = `<div class="text-[10px] text-[#a9abb3] mb-2">Чек каждые ${data.interval_sec}с · fail≥${data.fail_threshold} → failover · ok≥${data.ok_threshold} → recovery</div>`;
+    if (!keys.length) {
+      box.innerHTML = meta + '<div class="text-[#a9abb3]">Health-check ещё не тикал (подождите пару минут после старта).</div>';
+      return;
+    }
+    const now = data.now;
+    box.innerHTML = meta + '<div class="grid grid-cols-1 md:grid-cols-2 gap-2">' + keys.map(k => {
+      const s = status[k];
+      const ago = s.last_check_ts ? (now - s.last_check_ts) + 's назад' : '—';
+      const state = s.failed_over
+        ? `<span class="text-[#ff716c]">FAILED OVER → ${escapeHtml(s.failover_to || '?')}</span>`
+        : (s.fail_count > 0 ? `<span style="color:#ffb453">fails=${s.fail_count}</span>` : '<span style="color:#6ee7b7">OK</span>');
+      return `
+        <div class="bg-[#161a21] rounded p-2">
+          <div class="font-semibold">${escapeHtml(k)}</div>
+          <div class="text-xs">${state}</div>
+          <div class="text-[10px] text-[#a9abb3]">проверка ${ago} · ok=${s.ok_count} fail=${s.fail_count}</div>
+        </div>`;
+    }).join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="text-[#ff716c]">Ошибка: ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+async function loadServerPool() {
+  await loadFailoverStatus();
+  const box = document.getElementById('servers-manage');
+  const backupSelect = document.getElementById('srv-backup-for');
+  try {
+    const res = await fetch(`${API_URL}/api/admin/servers/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPass })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      box.innerHTML = `<div class="text-[#ff716c]">${escapeHtml(data.error || 'Ошибка')}</div>`;
+      return;
+    }
+    const rule = data.capacity_rule || {};
+    const items = data.servers || [];
+    document.getElementById('servers-meta').textContent =
+      `Серверов: ${items.length} · формула: bw / ${rule.peak_mbps_per_user} Мбит × ${Math.round((1/(rule.concurrency||0.3))*10)/10} = max_users`;
+
+    // Заполняем select "резерв для" всеми существующими серверами
+    if (backupSelect) {
+      backupSelect.innerHTML = '<option value="">— не резерв —</option>' +
+        items.map(s => `<option value="${escapeHtml(s.key)}">${s.flag || ''} ${escapeHtml(s.name)} (${escapeHtml(s.key)})</option>`).join('');
+    }
+
+    if (!items.length) {
+      box.innerHTML = '<div class="text-[#a9abb3] text-sm">Нет серверов — добавь первый.</div>';
+      return;
+    }
+    box.innerHTML = items.map(s => {
+      const occ = s.max_users ? Math.round((s.users_count / s.max_users) * 100) : 0;
+      const occColor = occ >= 90 ? '#ff716c' : occ >= 70 ? '#ffb453' : '#6ee7b7';
+      const disabled = s.disabled;
+      return `
+        <div class="bg-[#0b0e14] border border-[#22262f] rounded-lg p-3" data-key="${escapeHtml(s.key)}">
+          <div class="flex items-center gap-3 flex-wrap">
+            <span class="text-2xl">${s.flag || '🏳️'}</span>
+            <div class="flex-1 min-w-[180px]">
+              <div class="font-semibold">${escapeHtml(s.name)} <span class="text-[10px] text-[#a9abb3] font-mono">${escapeHtml(s.key)}${s.from_seed ? ' · seed' : ''}${disabled ? ' · <span style=\"color:#ffb453\">disabled</span>' : ''}</span></div>
+              <div class="text-[10px] text-[#a9abb3] font-mono">${escapeHtml(s.ip)}:${s.port}${s.backup_for ? ' · резерв для ' + escapeHtml(s.backup_for) : ''}</div>
+            </div>
+            <div class="text-right">
+              <div class="text-sm font-semibold" style="color:${occColor}">${s.users_count} / ${s.max_users}</div>
+              <div class="text-[10px] text-[#a9abb3]">${s.bandwidth_mbps || '?'} Мбит/с · ${occ}%</div>
+            </div>
+          </div>
+          <div class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <label class="block"><span class="text-[#a9abb3]">Bandwidth</span>
+              <input type="number" data-field="bandwidth_mbps" value="${s.bandwidth_mbps || 50}" class="w-full mt-1 px-2 py-1 rounded bg-[#161a21] font-mono">
+            </label>
+            <label class="block"><span class="text-[#a9abb3]">max_users override (0=формула)</span>
+              <input type="number" data-field="max_users" value="" placeholder="${s.max_users}" class="w-full mt-1 px-2 py-1 rounded bg-[#161a21] font-mono">
+            </label>
+            <label class="block"><span class="text-[#a9abb3]">Резерв для</span>
+              <select data-field="backup_for" class="w-full mt-1 px-2 py-1 rounded bg-[#161a21]">
+                <option value="">—</option>
+                ${items.filter(x => x.key !== s.key).map(x =>
+                  `<option value="${escapeHtml(x.key)}"${x.key === s.backup_for ? ' selected' : ''}>${escapeHtml(x.key)}</option>`
+                ).join('')}
+              </select>
+            </label>
+            <label class="block"><span class="text-[#a9abb3]">Отключить</span>
+              <select data-field="disabled" class="w-full mt-1 px-2 py-1 rounded bg-[#161a21]">
+                <option value="false"${!disabled ? ' selected' : ''}>нет</option>
+                <option value="true"${disabled ? ' selected' : ''}>да</option>
+              </select>
+            </label>
+          </div>
+          <div class="mt-2 flex gap-2">
+            <button class="btn-primary text-xs" data-save>Сохранить</button>
+            ${s.users_count === 0 ? `<button class="text-xs px-3 py-1 rounded bg-[#3a1f25] text-[#ff9aa7]" data-remove>Удалить</button>` : `<button class="text-xs px-3 py-1 rounded bg-[#3a1f25] text-[#ff9aa7]" data-remove-force>Удалить принудительно (${s.users_count} юзеров)</button>`}
+          </div>
+        </div>`;
+    }).join('');
+
+    box.querySelectorAll('[data-save]').forEach(btn => {
+      btn.onclick = () => saveServerRow(btn.closest('[data-key]'));
+    });
+    box.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.onclick = () => removeServer(btn.closest('[data-key]').dataset.key, false);
+    });
+    box.querySelectorAll('[data-remove-force]').forEach(btn => {
+      btn.onclick = () => removeServer(btn.closest('[data-key]').dataset.key, true);
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="text-[#ff716c]">Ошибка: ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+async function saveServerRow(row) {
+  if (!row) return;
+  const key = row.dataset.key;
+  const body = { password: adminPass, key };
+  const bw = row.querySelector('[data-field="bandwidth_mbps"]').value;
+  const mu = row.querySelector('[data-field="max_users"]').value;
+  const bf = row.querySelector('[data-field="backup_for"]').value;
+  const dis = row.querySelector('[data-field="disabled"]').value === 'true';
+  if (bw) body.bandwidth_mbps = parseInt(bw, 10);
+  if (mu) body.max_users = parseInt(mu, 10);
+  body.backup_for = bf || '';
+  body.disabled = dis;
+  const res = await fetch(`${API_URL}/api/admin/servers/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || 'Ошибка');
+  await loadServerPool();
+}
+
+async function removeServer(key, force) {
+  const msg = force
+    ? `Удалить сервер ${key} ПРИНУДИТЕЛЬНО? Юзеры на нём останутся висеть без рабочего сервера.`
+    : `Удалить сервер ${key}?`;
+  if (!confirm(msg)) return;
+  const res = await fetch(`${API_URL}/api/admin/servers/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: adminPass, key, force })
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || 'Ошибка');
+  await loadServerPool();
+}
+
+document.getElementById('servers-add-btn')?.addEventListener('click', () => {
+  document.getElementById('server-add-form').classList.remove('hidden');
+});
+document.getElementById('server-add-close')?.addEventListener('click', () => {
+  document.getElementById('server-add-form').classList.add('hidden');
+});
+document.getElementById('server-add-submit')?.addEventListener('click', async () => {
+  const statusEl = document.getElementById('server-add-status');
+  const btn = document.getElementById('server-add-submit');
+  const body = {
+    password: adminPass,
+    ip: document.getElementById('srv-ip').value.trim(),
+    ssh_user: document.getElementById('srv-user').value.trim() || 'root',
+    country: document.getElementById('srv-country').value.trim().toUpperCase(),
+    name: document.getElementById('srv-name').value.trim(),
+    flag: document.getElementById('srv-flag').value.trim(),
+    bandwidth_mbps: parseInt(document.getElementById('srv-bw').value || '50', 10),
+    backup_for: document.getElementById('srv-backup-for').value,
+  };
+  btn.disabled = true;
+  statusEl.textContent = 'Пробую SSH, ставлю xray+hysteria (может занять 2-3 мин)...';
+  try {
+    const res = await fetch(`${API_URL}/api/admin/servers/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.innerHTML = `<span class="text-[#ff716c]">${escapeHtml(data.error || 'Ошибка')}</span>${data.ssh_error ? '<br><span class="font-mono text-[10px]">' + escapeHtml(data.ssh_error) + '</span>' : ''}${data.stderr ? '<pre class="text-[10px] mt-2 whitespace-pre-wrap max-h-40 overflow-auto">' + escapeHtml(data.stderr) + '</pre>' : ''}`;
+      return;
+    }
+    statusEl.innerHTML = `<span class="text-[#6ee7b7]">OK · key=${escapeHtml(data.key)}</span>`;
+    document.getElementById('server-add-form').classList.add('hidden');
+    ['srv-ip','srv-country','srv-name','srv-flag','srv-backup-for'].forEach(id => { document.getElementById(id).value = ''; });
+    await loadServerPool();
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-[#ff716c]">Ошибка сети: ${escapeHtml(String(e))}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // Tabs (lazy-load on first click)
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.onclick = () => {
@@ -980,7 +1258,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
-    if (btn.dataset.tab === 'servers' && !serversLoadedOnce) loadServers(false);
+    if (btn.dataset.tab === 'servers') {
+      loadServerPool();
+      if (!serversLoadedOnce) loadServers(false);
+    }
     if (btn.dataset.tab === 'alerts' && !alertsLoadedOnce) loadAlerts();
     if (btn.dataset.tab === 'backups' && !backupsLoadedOnce) loadBackups();
   };
