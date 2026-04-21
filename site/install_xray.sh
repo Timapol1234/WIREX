@@ -16,6 +16,17 @@ SID_DEFAULT="abcd1234"
 
 echo "=== BYPASS Xray installer ===" >&2
 
+# 0. Зависимости apt (на свежем сервере кэш apt может быть пустой,
+#    и официальный Xray-install падает на `apt install unzip`).
+if command -v apt-get >/dev/null 2>&1; then
+    echo "[0/5] apt-get update + базовые зависимости (unzip/curl/ca-certificates)..." >&2
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >&2 || { echo "apt-get update упал — проверь DNS/сеть на сервере" >&2; exit 1; }
+    apt-get install -y --no-install-recommends unzip curl ca-certificates >&2 || {
+        echo "apt-get install unzip/curl упал — смотри вывод выше" >&2; exit 1;
+    }
+fi
+
 # 1. Бинарник
 if ! command -v xray >/dev/null 2>&1; then
     echo "[1/5] Устанавливаю xray..." >&2

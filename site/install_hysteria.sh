@@ -23,6 +23,17 @@ AUTH_URL="http://109.248.162.180:8080/api/hy-auth"
 
 echo "=== BYPASS Hysteria 2 installer ==="
 
+# 0. Зависимости apt (на свежем сервере кэш может быть пустой;
+#    openssl нужен для самоподписанного серта, curl/ca-certificates — для get.hy2.sh).
+if command -v apt-get >/dev/null 2>&1; then
+    echo "[0/7] apt-get update + базовые зависимости (openssl/curl/ca-certificates)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y || { echo "apt-get update упал — проверь DNS/сеть на сервере"; exit 1; }
+    apt-get install -y --no-install-recommends openssl curl ca-certificates || {
+        echo "apt-get install openssl/curl упал — смотри вывод выше"; exit 1;
+    }
+fi
+
 # 1. Бинарник
 if ! command -v hysteria >/dev/null 2>&1; then
     echo "[1/7] Устанавливаю hysteria..."
