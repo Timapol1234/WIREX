@@ -567,6 +567,8 @@ PROTECTED
 <script>
 let pendingEmail = '';
 let currentSubUrl = '';
+let currentVlessUrl = '';
+let currentHy2Url = '';
 let userEmail = localStorage.getItem('user_email') || '';
 let sessionToken = localStorage.getItem('session_token');
 let selectedServer = null;
@@ -626,12 +628,22 @@ document.querySelectorAll('[data-close-modal]').forEach(el => {
     if (m) m.addEventListener('click', (e) => { if (e.target === m) closeModal(id); });
 });
 
-function buildClientDeepLinks(subUrl) {
+function utf8ToBase64(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+}
+
+function buildClientDeepLinks(subUrl, vlessUrl, hy2Url) {
     const enc = encodeURIComponent(subUrl);
+    // Happ Plus блокирует HTTP-подписки ("небезопасная схема"), поэтому ему
+    // отдаём конфиги инлайн через base64 — без HTTP-фетча.
+    const inlineConfigs = [vlessUrl, hy2Url].filter(Boolean).join('\n');
+    const happPayload = inlineConfigs
+        ? encodeURIComponent(utf8ToBase64(inlineConfigs))
+        : enc;
     return {
         v2box: `v2box://install-sub?url=${enc}&name=BYPASS`,
         v2raytun: `v2raytun://import/${enc}`,
-        happ: `happ://add/${enc}`,
+        happ: `happ://add/${happPayload}`,
     };
 }
 
@@ -640,7 +652,7 @@ document.getElementById('auto-import-btn')?.addEventListener('click', () => {
         showToast('Не нашёл ссылку подписки', 'error');
         return;
     }
-    const links = buildClientDeepLinks(currentSubUrl);
+    const links = buildClientDeepLinks(currentSubUrl, currentVlessUrl, currentHy2Url);
     const v2box = document.getElementById('open-v2box');
     const v2raytun = document.getElementById('open-v2raytun');
     const happ = document.getElementById('open-happ');
@@ -1060,6 +1072,8 @@ function showResult(data, toastMessage) {
     document.getElementById('vless-url').textContent = data.vless_url;
     document.getElementById('sub-url').textContent = data.sub_url;
     currentSubUrl = data.sub_url || '';
+    currentVlessUrl = data.vless_url || '';
+    currentHy2Url = data.hysteria_url || '';
     document.getElementById('result-info').textContent = `${data.username} — ${data.server_name || data.server}`;
 
     const hy2Tab = document.getElementById('hy2-tab-btn');
