@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
-<title>WIREX — Encrypted access</title>
-<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<title>WIRΣX — Encrypted access</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
@@ -146,10 +147,14 @@
             background: var(--wx-surface-2);
             border: 1px solid var(--wx-border);
         }
-        .wx-input {
-            background: var(--wx-surface);
+        .wx-input,
+        input.wx-input,
+        textarea.wx-input {
+            background: var(--wx-surface) !important;
             border: 1px solid var(--wx-border);
-            color: var(--wx-text);
+            color: var(--wx-text) !important;
+            -webkit-text-fill-color: var(--wx-text) !important;
+            caret-color: var(--wx-cyan);
             transition: border-color .15s, box-shadow .15s;
         }
         .wx-input:focus {
@@ -157,7 +162,46 @@
             border-color: var(--wx-cyan);
             box-shadow: 0 0 0 3px rgba(245,245,245,.10);
         }
-        .wx-input::placeholder { color: #4A4A4A; }
+        .wx-input::placeholder { color: #4A4A4A !important; opacity: 1; }
+        .wx-input:-webkit-autofill,
+        .wx-input:-webkit-autofill:hover,
+        .wx-input:-webkit-autofill:focus {
+            -webkit-text-fill-color: var(--wx-text) !important;
+            -webkit-box-shadow: 0 0 0 1000px var(--wx-surface) inset !important;
+            transition: background-color 9999s ease-in-out 0s;
+        }
+
+        /* Custom checkbox — visible & on-brand */
+        .wx-check {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 18px; height: 18px;
+            border: 1.5px solid var(--wx-border);
+            border-radius: 4px;
+            background: var(--wx-surface);
+            cursor: pointer;
+            position: relative;
+            transition: border-color .15s, background .15s, box-shadow .15s;
+            flex-shrink: 0;
+        }
+        .wx-check:hover { border-color: #4A4A4A; }
+        .wx-check:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(245,245,245,.15);
+        }
+        .wx-check:checked {
+            background: var(--wx-cyan);
+            border-color: var(--wx-cyan);
+        }
+        .wx-check:checked::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'><path d='M3.5 8.5l3 3 6-6.5' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 14px 14px;
+        }
         .wx-divider { height: 1px; background: var(--wx-border-soft); }
         .wx-chip {
             display: inline-flex; align-items: center; gap: 4px;
@@ -238,15 +282,15 @@
 
 <!-- TopAppBar -->
 <nav class="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-xl border-b border-outline-variant">
-<div class="flex items-center justify-between px-5 py-3 max-w-7xl mx-auto">
-<div class="flex items-center gap-2.5">
-<img src="/static/logo.svg" alt="WIREX" class="h-8 w-8 rounded-md">
-<span class="font-headline text-lg font-bold tracking-wide text-on-surface">WIREX</span>
+<div class="flex items-center justify-between gap-2 px-4 sm:px-5 py-3 max-w-7xl mx-auto">
+<div class="flex items-center gap-2 flex-shrink-0">
+<img src="/static/logo.svg" alt="WIRΣX" class="h-7 w-7 rounded">
+<span class="font-headline text-[18px] leading-none font-bold tracking-wide text-on-surface">WIR<span class="text-primary">Σ</span>X</span>
 </div>
-<div class="flex items-center gap-2">
-<div id="sub-status-chip" class="hidden wx-chip"></div>
-<div id="user-email-display" class="text-on-surface-variant text-xs font-mono hidden truncate max-w-[120px]"></div>
-<button id="logout-btn" class="border border-outline text-on-surface-variant hover:text-primary hover:border-primary px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hidden">Выйти</button>
+<div class="flex items-center gap-2 min-w-0">
+<div id="sub-status-chip" class="hidden wx-chip flex-shrink-0"></div>
+<div id="user-email-display" class="text-on-surface-variant text-xs font-mono hidden md:block truncate max-w-[120px]"></div>
+<button id="logout-btn" class="border border-outline text-on-surface-variant hover:text-primary hover:border-primary px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors hidden uppercase tracking-wider flex-shrink-0">Выйти</button>
 </div>
 </div>
 </nav>
@@ -257,10 +301,10 @@
 <section id="email-section" class="relative px-5 py-10 overflow-hidden">
 <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[90%] h-[60%] bg-primary/[0.06] rounded-full blur-[120px] pointer-events-none"></div>
 <div class="relative z-10 flex flex-col items-center text-center max-w-[440px] mx-auto">
-<img src="/static/logo.svg" alt="WIREX" class="w-20 h-20 rounded-2xl mb-7 wx-glow-sm">
+<img src="/static/logo.svg" alt="WIRΣX" class="w-20 h-20 rounded-2xl mb-7 wx-glow-sm">
 <div class="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mb-3">Encrypted access</div>
 <h1 class="font-headline text-[44px] leading-[1.05] font-bold tracking-tight mb-3">
-Welcome to<br><span class="text-primary">WIREX</span>
+Welcome to<br><span>WIR<span class="text-primary">Σ</span>X</span>
 </h1>
 <p class="text-on-surface-variant text-sm mb-8 max-w-[320px] leading-relaxed">Зашифрованный доступ к зарубежным сервисам. Войдите по email — пришлём одноразовый код.</p>
 
@@ -270,11 +314,11 @@ Welcome to<br><span class="text-primary">WIREX</span>
 <div id="email-error" class="text-error text-xs mb-3 hidden text-left"></div>
 <div class="space-y-2.5 mb-5 text-left">
 <label class="flex items-start gap-2.5 text-[13px] text-on-surface-variant cursor-pointer leading-snug">
-<input type="checkbox" id="consent-privacy" class="mt-0.5 w-[18px] h-[18px] rounded text-primary accent-primary cursor-pointer flex-shrink-0">
+<input type="checkbox" id="consent-privacy" class="wx-check mt-0.5">
 <span>Я ознакомлен(а) с <a href="#" class="text-primary hover:underline underline-offset-2" data-open-modal="privacy-modal">Политикой конфиденциальности</a></span>
 </label>
 <label class="flex items-start gap-2.5 text-[13px] text-on-surface-variant cursor-pointer leading-snug">
-<input type="checkbox" id="consent-pd" class="mt-0.5 w-[18px] h-[18px] rounded text-primary accent-primary cursor-pointer flex-shrink-0">
+<input type="checkbox" id="consent-pd" class="wx-check mt-0.5">
 <span>Даю <a href="#" class="text-primary hover:underline underline-offset-2" data-open-modal="consent-modal">согласие на обработку персональных данных</a></span>
 </label>
 </div>
@@ -291,7 +335,7 @@ Welcome to<br><span class="text-primary">WIREX</span>
 <section id="otp-section" class="relative px-5 py-10 overflow-hidden hidden">
 <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[90%] h-[60%] bg-primary/[0.06] rounded-full blur-[120px] pointer-events-none"></div>
 <div class="relative z-10 flex flex-col items-center text-center max-w-[440px] mx-auto">
-<img src="/static/logo.svg" alt="WIREX" class="w-14 h-14 rounded-xl mb-5">
+<img src="/static/logo.svg" alt="WIRΣX" class="w-14 h-14 rounded-xl mb-5">
 <div class="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mb-2">Verification</div>
 <h2 class="font-headline text-3xl font-bold mb-2 tracking-tight">Подтверждение</h2>
 <p class="text-on-surface-variant text-sm mb-7">Код отправлен на <span id="otp-email" class="text-primary font-mono"></span></p>
@@ -716,9 +760,9 @@ Protected
 <!-- Footer -->
 <footer class="w-full bg-black border-t border-outline-variant mt-8">
 <div class="w-full max-w-3xl mx-auto px-5 py-10 flex flex-col items-center gap-6 text-center">
-<div class="flex items-center gap-2.5">
-<img src="/static/logo.svg" alt="WIREX" class="h-6 w-6 rounded">
-<span class="text-base font-bold text-on-surface font-headline tracking-wide">WIREX</span>
+<div class="flex items-center gap-2">
+<img src="/static/logo.svg" alt="WIRΣX" class="h-6 w-6 rounded">
+<span class="text-[16px] leading-none font-bold text-on-surface font-headline tracking-wide">WIR<span class="text-primary">Σ</span>X</span>
 </div>
 <div class="flex flex-wrap justify-center gap-5 text-on-surface-variant text-xs uppercase tracking-[0.12em] font-medium">
 <button type="button" class="hover:text-primary transition-colors cursor-pointer" data-open-modal="privacy-modal">Privacy</button>
@@ -727,7 +771,7 @@ Protected
 <a class="hover:text-primary transition-colors" href="#">Status</a>
 </div>
 <div class="text-on-surface-variant/60 text-[10px] tracking-[0.2em] font-mono uppercase">
-© 2026 WIREX · Encrypted Access
+© 2026 WIRΣX · Encrypted Access
 </div>
 </div>
 </footer>
@@ -809,12 +853,12 @@ function updateSubStatusChip() {
     let text = '', cls = 'wx-chip-muted', dot = '';
 
     if (pendingRequest) {
-        text = 'На проверке';
+        text = 'Проверка';
         cls = 'wx-chip-muted';
         dot = '<span class="w-1.5 h-1.5 bg-on-surface-variant rounded-full"></span>';
     } else if (currentSub && currentSub.active) {
         if (currentSub.plan === 'unlimited') {
-            text = '∞ Безлимит';
+            text = '∞';
             cls = 'wx-chip-success';
             dot = '<span class="w-1.5 h-1.5 bg-[#00E78B] rounded-full animate-pulse"></span>';
         } else {
@@ -824,7 +868,7 @@ function updateSubStatusChip() {
                 cls = 'wx-chip-success';
                 dot = '<span class="w-1.5 h-1.5 bg-[#00E78B] rounded-full"></span>';
             } else if (days > 0) {
-                text = days === 1 ? 'Завтра конец' : `${days} дн до конца`;
+                text = `${days} дн`;
                 cls = '';
                 chip.style.background = 'rgba(255,176,32,.08)';
                 chip.style.color = '#FFB020';
@@ -840,8 +884,8 @@ function updateSubStatusChip() {
         cls = 'wx-chip-muted';
     }
 
-    chip.innerHTML = dot + ' ' + text;
-    chip.className = 'wx-chip ' + cls;
+    chip.innerHTML = '<span class="inline-flex items-center gap-1.5">' + dot + '<span>' + text + '</span></span>';
+    chip.className = 'wx-chip ' + cls + ' flex-shrink-0';
     chip.classList.remove('hidden');
 }
 
