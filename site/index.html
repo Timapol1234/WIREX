@@ -151,7 +151,17 @@
 <input type="email" id="login-email" placeholder="example@mail.com" class="w-full bg-surface-container-high border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary">
 </div>
 <div id="email-error" class="text-error text-sm mb-4 hidden"></div>
-<button id="send-code-btn" class="primary-gradient text-on-primary py-4 rounded-full font-bold text-lg w-full active:scale-95 transition-all">Отправить код</button>
+<div class="space-y-2 mb-5 text-left">
+<label class="flex items-start gap-2 text-sm text-on-surface-variant cursor-pointer">
+<input type="checkbox" id="consent-privacy" class="mt-0.5 w-4 h-4 accent-primary cursor-pointer flex-shrink-0">
+<span>Я ознакомлен(а) с <button type="button" class="text-primary hover:underline" data-open-modal="privacy-modal">Политикой конфиденциальности</button></span>
+</label>
+<label class="flex items-start gap-2 text-sm text-on-surface-variant cursor-pointer">
+<input type="checkbox" id="consent-pd" class="mt-0.5 w-4 h-4 accent-primary cursor-pointer flex-shrink-0">
+<span>Даю <button type="button" class="text-primary hover:underline" data-open-modal="consent-modal">согласие на обработку персональных данных</button></span>
+</label>
+</div>
+<button id="send-code-btn" disabled class="primary-gradient text-on-primary py-4 rounded-full font-bold text-lg w-full active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100">Отправить код</button>
 </div>
 </div>
 </section>
@@ -419,11 +429,59 @@ PROTECTED
 
 <div class="border-t border-outline-variant/20 pt-5">
 <label class="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">Или введите промокод</label>
-<div class="flex gap-2 mt-2">
-<input id="promo-input" placeholder="PROMO2025" autocomplete="off" class="flex-1 bg-surface-container-high border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary uppercase">
-<button id="promo-btn" class="bg-primary/20 text-primary px-5 rounded-xl font-semibold active:scale-95 transition-all">Активировать</button>
+<div class="flex flex-col sm:flex-row gap-2 mt-2">
+<input id="promo-input" placeholder="PROMO2025" autocomplete="off" class="flex-1 min-w-0 bg-surface-container-high border border-outline-variant/30 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:border-primary uppercase">
+<button id="promo-btn" class="bg-primary/20 text-primary px-5 py-3 rounded-xl font-semibold active:scale-95 transition-all">Активировать</button>
 </div>
 <div id="promo-msg" class="text-xs mt-2 hidden"></div>
+</div>
+</div>
+</div>
+
+<!-- Privacy Policy Modal -->
+<div id="privacy-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start md:items-center justify-center p-4 overflow-y-auto">
+<div class="bg-surface-container w-full max-w-2xl rounded-2xl p-6 md:p-8 my-8 relative">
+<button class="absolute top-4 right-4 text-on-surface-variant hover:text-primary" data-close-modal="privacy-modal" aria-label="Закрыть">
+<span class="material-symbols-outlined">close</span>
+</button>
+<h2 class="font-headline text-2xl font-bold mb-4">Политика конфиденциальности</h2>
+<div class="text-sm text-on-surface-variant space-y-3 max-h-[70vh] overflow-y-auto pr-2 text-left">
+<p class="text-xs text-on-surface-variant/70">Дата вступления в силу: 25.04.2026</p>
+<p><strong class="text-on-surface">1. Общие положения.</strong> Настоящая Политика описывает порядок обработки персональных данных пользователей сервиса BYPASS (далее — Сервис). Используя Сервис, вы соглашаетесь с условиями Политики. Если вы не согласны — не используйте Сервис.</p>
+<p><strong class="text-on-surface">2. Какие данные мы обрабатываем.</strong></p>
+<ul class="list-disc pl-5 space-y-1">
+<li>Адрес электронной почты — указывается вами при регистрации, используется для отправки одноразовых кодов авторизации (OTP) и связи по вопросам обслуживания.</li>
+<li>IP-адрес — фиксируется автоматически, используется для защиты от автоматизированных злоупотреблений (rate-limit).</li>
+<li>Технические метаданные сессии — идентификатор сессии, время последней активности, выбранный сервер.</li>
+<li>Данные о подписке — статус подписки, история продлений, использованные промокоды.</li>
+</ul>
+<p>Сервис <strong class="text-on-surface">не собирает</strong> содержимое вашего трафика, посещаемые сайты или DNS-запросы. Сервис не использует системы веб-аналитики (Google Analytics, Яндекс.Метрика и т.п.). Платёжные реквизиты карт не обрабатываются и не хранятся — оплата проходит через сторонний сервис lava.top.</p>
+<p><strong class="text-on-surface">3. Цели обработки.</strong> Предоставление доступа к Сервису, аутентификация пользователя, защита от злоупотреблений, биллинг и контроль срока подписки, связь по вопросам работы Сервиса.</p>
+<p><strong class="text-on-surface">4. Правовое основание.</strong> Обработка осуществляется на основании вашего согласия (п. 1 ч. 1 ст. 6 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных»), а также для исполнения договора, стороной которого вы являетесь.</p>
+<p><strong class="text-on-surface">5. Хранение и передача.</strong> Данные хранятся на серверах в дата-центре в Амстердаме (Нидерланды) с ограниченным доступом. Передача третьим лицам производится только: (а) SMTP-провайдеру для отправки OTP-кода на email; (б) платёжному сервису lava.top для проведения оплаты подписки; (в) по требованию уполномоченных государственных органов в порядке, установленном законом.</p>
+<p><strong class="text-on-surface">6. Срок хранения.</strong> Данные хранятся всё время, пока ваш аккаунт активен. После удаления аккаунта данные удаляются в течение 30 дней, за исключением случаев, когда хранение обязательно по закону.</p>
+<p><strong class="text-on-surface">7. Cookie и локальное хранилище.</strong> Сервис не использует cookie. Для сохранения сессии используется localStorage браузера (токен сессии и email) — эти данные хранятся локально на вашем устройстве и могут быть удалены вами в любой момент через настройки браузера или нажатием «Выйти».</p>
+<p><strong class="text-on-surface">8. Ваши права.</strong> Вы имеете право: получить информацию о ваших данных, требовать их уточнения, блокирования или удаления, отозвать согласие на обработку, обжаловать действия Сервиса в Роскомнадзор. Запросы направляйте на email поддержки — мы рассмотрим обращение в течение 30 дней.</p>
+<p><strong class="text-on-surface">9. Изменения.</strong> Мы можем обновлять Политику. Актуальная версия всегда доступна на этой странице.</p>
+</div>
+</div>
+</div>
+
+<!-- PD Consent Modal -->
+<div id="consent-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start md:items-center justify-center p-4 overflow-y-auto">
+<div class="bg-surface-container w-full max-w-2xl rounded-2xl p-6 md:p-8 my-8 relative">
+<button class="absolute top-4 right-4 text-on-surface-variant hover:text-primary" data-close-modal="consent-modal" aria-label="Закрыть">
+<span class="material-symbols-outlined">close</span>
+</button>
+<h2 class="font-headline text-2xl font-bold mb-4">Согласие на обработку персональных данных</h2>
+<div class="text-sm text-on-surface-variant space-y-3 max-h-[70vh] overflow-y-auto pr-2 text-left">
+<p>Проставляя соответствующую отметку и нажимая кнопку «Отправить код», я подтверждаю своё согласие сервису BYPASS на обработку моих персональных данных в соответствии с Федеральным законом от 27.07.2006 № 152-ФЗ «О персональных данных».</p>
+<p><strong class="text-on-surface">1. Состав данных:</strong> адрес электронной почты, IP-адрес, технические данные сессии (идентификатор сессии, время активности, выбранный сервер), данные о подписке (статус, история продлений, использованные промокоды).</p>
+<p><strong class="text-on-surface">2. Цели обработки:</strong> регистрация и аутентификация в Сервисе, защита Сервиса от злоупотреблений, биллинг подписки, связь по вопросам обслуживания.</p>
+<p><strong class="text-on-surface">3. Перечень действий:</strong> сбор, запись, систематизация, накопление, хранение, уточнение, использование, передача (предоставление третьим лицам в случаях, описанных в Политике конфиденциальности — SMTP-провайдеру для отправки OTP и платёжному сервису lava.top для проведения оплаты), блокирование, удаление, уничтожение.</p>
+<p><strong class="text-on-surface">4. Способы обработки:</strong> с использованием средств автоматизации и без таковых.</p>
+<p><strong class="text-on-surface">5. Срок действия согласия:</strong> согласие действует с момента его предоставления и до момента отзыва. Согласие может быть отозвано в любой момент путём направления письменного уведомления на email поддержки. После отзыва данные удаляются в течение 30 дней, за исключением случаев, когда хранение обязательно по закону.</p>
+<p><strong class="text-on-surface">6. Подтверждение ознакомления.</strong> Я подтверждаю, что ознакомлен(а) с Политикой конфиденциальности Сервиса, мне разъяснены мои права в области защиты персональных данных, и я понимаю последствия отказа от предоставления согласия.</p>
 </div>
 </div>
 </div>
@@ -433,13 +491,13 @@ PROTECTED
 <div class="w-full px-8 py-12 flex flex-col items-center gap-8 text-center">
 <div class="text-lg font-bold text-[#ecedf6] font-headline tracking-tighter">BYPASS_OS</div>
 <div class="flex flex-wrap justify-center gap-6 text-[#ecedf6]/50 text-sm font-['Inter']">
-<a class="hover:text-[#00F0FF] transition-all" href="#">Privacy</a>
-<a class="hover:text-[#00F0FF] transition-all" href="#">Terms</a>
+<button type="button" class="hover:text-[#00F0FF] transition-all cursor-pointer" data-open-modal="privacy-modal">Privacy</button>
+<button type="button" class="hover:text-[#00F0FF] transition-all cursor-pointer" data-open-modal="consent-modal">Terms</button>
 <a class="hover:text-[#00F0FF] transition-all" href="#">Protocol</a>
 <a class="hover:text-[#00F0FF] transition-all" href="#">Status</a>
 </div>
 <div class="text-[#ecedf6]/30 text-[10px] tracking-widest font-mono uppercase">
-© 2024 BYPASS. ENCRYPTED ACCESS.
+© 2026 BYPASS. ENCRYPTED ACCESS.
 </div>
 </div>
 </footer>
@@ -466,6 +524,43 @@ function showToast(message, type = 'success') {
         toast.remove();
     }, 3000);
 }
+
+function updateSendBtnState() {
+    const btn = document.getElementById('send-code-btn');
+    if (!btn) return;
+    if (countdownTimer) return;
+    const c1 = document.getElementById('consent-privacy')?.checked;
+    const c2 = document.getElementById('consent-pd')?.checked;
+    btn.disabled = !(c1 && c2);
+}
+
+document.getElementById('consent-privacy')?.addEventListener('change', updateSendBtnState);
+document.getElementById('consent-pd')?.addEventListener('change', updateSendBtnState);
+
+function openModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.remove('hidden');
+}
+function closeModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.add('hidden');
+}
+document.querySelectorAll('[data-open-modal]').forEach(el => {
+    el.addEventListener('click', (e) => {
+        e.preventDefault();
+        openModal(el.dataset.openModal);
+    });
+});
+document.querySelectorAll('[data-close-modal]').forEach(el => {
+    el.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeModal(el.dataset.closeModal);
+    });
+});
+['privacy-modal', 'consent-modal'].forEach(id => {
+    const m = document.getElementById(id);
+    if (m) m.addEventListener('click', (e) => { if (e.target === m) closeModal(id); });
+});
 
 // OTP input handling
 const digits = document.querySelectorAll('.digit-input');
@@ -563,8 +658,9 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
         seconds--;
         if (seconds <= 0) {
             clearInterval(countdownTimer);
-            btn.disabled = false;
+            countdownTimer = null;
             btn.textContent = 'Отправить код';
+            updateSendBtnState();
         } else {
             btn.textContent = `Повторно через ${seconds}с`;
         }
@@ -583,8 +679,9 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
             errorEl.textContent = data.error;
             errorEl.classList.remove('hidden');
             clearInterval(countdownTimer);
-            btn.disabled = false;
+            countdownTimer = null;
             btn.textContent = 'Отправить код';
+            updateSendBtnState();
             return;
         }
         
@@ -603,8 +700,9 @@ document.getElementById('send-code-btn')?.addEventListener('click', async () => 
         errorEl.textContent = 'Ошибка соединения';
         errorEl.classList.remove('hidden');
         clearInterval(countdownTimer);
-        btn.disabled = false;
+        countdownTimer = null;
         btn.textContent = 'Отправить код';
+        updateSendBtnState();
     }
 });
 
@@ -1527,8 +1625,8 @@ initPlatformTabs();
 document.getElementById('change-email-btn')?.addEventListener('click', () => {
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     const btn = document.getElementById('send-code-btn');
-    btn.disabled = false;
     btn.textContent = 'Отправить код';
+    updateSendBtnState();
     digits.forEach(d => d.value = '');
     document.getElementById('otp-error')?.classList.add('hidden');
     showEmailSection();
