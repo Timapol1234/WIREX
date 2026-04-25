@@ -213,6 +213,25 @@
         .digit-input {} /* legacy hook kept for JS selectors */
         .wx-bottom-fade { background: linear-gradient(180deg, transparent, #000 60%); }
         ::selection { background: var(--wx-cyan); color: #000; }
+
+        /* Shimmer skeleton */
+        @keyframes wxShimmer {
+            0%   { background-position: -150% 0; }
+            100% { background-position: 150% 0; }
+        }
+        .wx-skel {
+            background: linear-gradient(90deg, #0A0A0A 0%, #1F1F1F 50%, #0A0A0A 100%);
+            background-size: 200% 100%;
+            animation: wxShimmer 1.6s linear infinite;
+            border-radius: 6px;
+        }
+        .wx-skel-line { height: 12px; }
+        .wx-skel-card {
+            height: 132px;
+            border-radius: 12px;
+            border: 1px solid var(--wx-border-soft);
+        }
+        .wx-skel-tile { height: 92px; border-radius: 8px; }
     </style>
 </head>
 <body class="bg-background text-on-surface">
@@ -224,8 +243,9 @@
 <img src="/static/logo.svg" alt="WIREX" class="h-8 w-8 rounded-md">
 <span class="font-headline text-lg font-bold tracking-wide text-on-surface">WIREX</span>
 </div>
-<div class="flex items-center gap-3">
-<div id="user-email-display" class="text-primary text-xs font-mono hidden truncate max-w-[140px]"></div>
+<div class="flex items-center gap-2">
+<div id="sub-status-chip" class="hidden wx-chip"></div>
+<div id="user-email-display" class="text-on-surface-variant text-xs font-mono hidden truncate max-w-[120px]"></div>
 <button id="logout-btn" class="border border-outline text-on-surface-variant hover:text-primary hover:border-primary px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hidden">Выйти</button>
 </div>
 </div>
@@ -237,11 +257,12 @@
 <section id="email-section" class="relative px-5 py-10 overflow-hidden">
 <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[90%] h-[60%] bg-primary/[0.06] rounded-full blur-[120px] pointer-events-none"></div>
 <div class="relative z-10 flex flex-col items-center text-center max-w-[440px] mx-auto">
-<img src="/static/logo.svg" alt="WIREX" class="w-20 h-20 rounded-2xl mb-6 wx-glow-sm">
-<h1 class="font-headline text-3xl font-bold tracking-tight mb-2">
-Подключение к <span class="text-primary">WIREX</span>
+<img src="/static/logo.svg" alt="WIREX" class="w-20 h-20 rounded-2xl mb-7 wx-glow-sm">
+<div class="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mb-3">Encrypted access</div>
+<h1 class="font-headline text-[44px] leading-[1.05] font-bold tracking-tight mb-3">
+Welcome to<br><span class="text-primary">WIREX</span>
 </h1>
-<p class="text-on-surface-variant text-sm mb-8 max-w-[320px]">Зашифрованный доступ к зарубежным сервисам. Войдите по email — пришлём одноразовый код.</p>
+<p class="text-on-surface-variant text-sm mb-8 max-w-[320px] leading-relaxed">Зашифрованный доступ к зарубежным сервисам. Войдите по email — пришлём одноразовый код.</p>
 
 <div class="w-full wx-card rounded-2xl p-6">
 <label class="block text-[11px] text-on-surface-variant font-semibold uppercase tracking-[0.12em] mb-2 text-left">Email</label>
@@ -271,7 +292,8 @@
 <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[90%] h-[60%] bg-primary/[0.06] rounded-full blur-[120px] pointer-events-none"></div>
 <div class="relative z-10 flex flex-col items-center text-center max-w-[440px] mx-auto">
 <img src="/static/logo.svg" alt="WIREX" class="w-14 h-14 rounded-xl mb-5">
-<h2 class="font-headline text-2xl font-bold mb-2">Подтверждение</h2>
+<div class="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mb-2">Verification</div>
+<h2 class="font-headline text-3xl font-bold mb-2 tracking-tight">Подтверждение</h2>
 <p class="text-on-surface-variant text-sm mb-7">Код отправлен на <span id="otp-email" class="text-primary font-mono"></span></p>
 
 <div class="w-full wx-card rounded-2xl p-6">
@@ -311,7 +333,11 @@
 
 <div id="sub-banner" class="hidden wx-card rounded-xl p-4 mb-5"></div>
 
-<div id="my-keys-loading" class="text-center py-16 text-on-surface-variant text-sm font-mono uppercase tracking-wider">Загрузка...</div>
+<div id="my-keys-loading" class="space-y-3">
+<div class="wx-skel wx-skel-card"></div>
+<div class="wx-skel wx-skel-card"></div>
+<div class="wx-skel wx-skel-card" style="opacity:.6"></div>
+</div>
 
 <div id="my-keys-empty" class="hidden text-center py-16">
 <div class="inline-block p-5 rounded-2xl wx-card mb-5">
@@ -551,7 +577,10 @@ Protected
 
 <label class="text-[11px] text-on-surface-variant font-semibold uppercase tracking-[0.12em]">Тариф</label>
 <div id="tariff-grid" class="grid grid-cols-2 gap-2 mt-2 mb-5">
-<div class="text-sm text-on-surface-variant col-span-full font-mono uppercase tracking-wider">Загрузка...</div>
+<div class="wx-skel wx-skel-tile"></div>
+<div class="wx-skel wx-skel-tile"></div>
+<div class="wx-skel wx-skel-tile"></div>
+<div class="wx-skel wx-skel-tile"></div>
 </div>
 
 <div class="wx-card rounded-lg p-4 mb-4">
@@ -769,6 +798,51 @@ document.querySelectorAll('[data-close-modal]').forEach(el => {
 
 function utf8ToBase64(str) {
     return btoa(unescape(encodeURIComponent(str)));
+}
+
+function updateSubStatusChip() {
+    const chip = document.getElementById('sub-status-chip');
+    if (!chip) return;
+    if (!sessionToken) { chip.classList.add('hidden'); return; }
+
+    chip.style.cssText = '';
+    let text = '', cls = 'wx-chip-muted', dot = '';
+
+    if (pendingRequest) {
+        text = 'На проверке';
+        cls = 'wx-chip-muted';
+        dot = '<span class="w-1.5 h-1.5 bg-on-surface-variant rounded-full"></span>';
+    } else if (currentSub && currentSub.active) {
+        if (currentSub.plan === 'unlimited') {
+            text = '∞ Безлимит';
+            cls = 'wx-chip-success';
+            dot = '<span class="w-1.5 h-1.5 bg-[#00E78B] rounded-full animate-pulse"></span>';
+        } else {
+            const days = subDaysLeft();
+            if (days > 7) {
+                text = `${days} дн`;
+                cls = 'wx-chip-success';
+                dot = '<span class="w-1.5 h-1.5 bg-[#00E78B] rounded-full"></span>';
+            } else if (days > 0) {
+                text = days === 1 ? 'Завтра конец' : `${days} дн до конца`;
+                cls = '';
+                chip.style.background = 'rgba(255,176,32,.08)';
+                chip.style.color = '#FFB020';
+                chip.style.border = '1px solid rgba(255,176,32,.3)';
+                dot = '<span class="w-1.5 h-1.5 bg-[#FFB020] rounded-full animate-pulse"></span>';
+            } else {
+                text = 'Истекла';
+                cls = 'wx-chip-muted';
+            }
+        }
+    } else {
+        text = 'Нет подписки';
+        cls = 'wx-chip-muted';
+    }
+
+    chip.innerHTML = dot + ' ' + text;
+    chip.className = 'wx-chip ' + cls;
+    chip.classList.remove('hidden');
 }
 
 function buildClientDeepLinks(subUrl, vlessUrl, hy2Url) {
@@ -1298,6 +1372,7 @@ async function loadMyKeys() {
         pendingRequest = subData.pending_request || null;
         renderSubBanner();
         renderMyKeys();
+        updateSubStatusChip();
     } catch (e) {
         showToast('Ошибка загрузки', 'error');
     } finally {
@@ -1418,12 +1493,15 @@ function renderTariffGrid() {
         return;
     }
     const cheapest = tariffs.reduce((m, t) => Math.min(m, t.price / t.days), Infinity);
+    const bestId = (tariffs.find(t => Math.abs((t.price / t.days) - cheapest) < 1e-6) || {}).id;
     grid.innerHTML = tariffs.map(t => {
         const perDay = (t.price / t.days);
         const discount = cheapest > 0 ? Math.round(100 - (perDay / (tariffs[0].price / tariffs[0].days)) * 100) : 0;
         const active = selectedTariffId === t.id;
+        const isBest = t.id === bestId && tariffs.length > 1;
         return `
-            <button data-tariff="${t.id}" class="tariff-tile text-left p-3 rounded-lg border transition-all ${active ? 'border-primary bg-[rgba(0,238,252,0.06)] wx-glow-sm' : 'border-outline bg-surface-container hover:border-primary/60'}">
+            <button data-tariff="${t.id}" class="tariff-tile relative text-left p-3 rounded-lg border transition-all ${active ? 'border-primary bg-[rgba(245,245,245,0.06)] wx-glow-sm' : 'border-outline bg-surface-container hover:border-primary/60'}">
+                ${isBest ? `<div class="absolute -top-2 right-2 wx-chip wx-chip-cyan" style="font-size:9px;padding:2px 6px;letter-spacing:.1em;">Выгодно</div>` : ''}
                 <div class="text-[10px] text-on-surface-variant font-semibold uppercase tracking-[0.12em]">${escapeHtml(t.label)}</div>
                 <div class="text-xl font-bold font-headline mt-1 ${active ? 'text-primary' : ''}">${t.price}₽</div>
                 <div class="text-[10px] text-on-surface-variant mt-1 font-mono">~${perDay.toFixed(1)}₽/день${discount > 0 ? ` · -${discount}%` : ''}</div>
