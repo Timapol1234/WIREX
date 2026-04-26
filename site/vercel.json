@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://api.wirex.online/api/$1"
+      "destination": "https://api.wirex.online:8443/api/$1"
     },
     {
       "source": "/(.*)",

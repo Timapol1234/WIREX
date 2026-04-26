@@ -45,7 +45,7 @@ TARIFFS = {
 }
 
 # Хост, с которого раздаются файлы подписок (файлы лежат только на NL-сервере)
-SUB_HOST = "api.wirex.online"
+SUB_HOST = "api.wirex.online:8443"
 
 # Время жизни сессии
 SESSION_TTL_DAYS = 30
