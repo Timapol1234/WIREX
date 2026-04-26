@@ -6,8 +6,8 @@
 
 set -e
 
-REPO=https://github.com/Timapol1234/bypass.git
-DEPLOY_DIR=/tmp/bypass-deploy
+REPO=https://github.com/Timapol1234/WIREX.git
+DEPLOY_DIR=/tmp/wirex-deploy
 APP_DIR=/opt/vpn-site
 
 echo ">>> 1. Клон свежего репо"
