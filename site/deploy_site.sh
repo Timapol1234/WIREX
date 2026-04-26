@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Быстрый деплой только Flask-сайта: обновляет /opt/vpn-site из репозитория,
 # рестартит vpn-site, проверяет что /api/health и /api/hy-auth живы.
-# НЕ трогает Hysteria/Xray конфиги на серверах — для этого fix_hysteria_corruption.sh.
+# НЕ трогает Hysteria/Xray конфиги на серверах.
 # Запускать на Амстердаме.
 
 set -e
