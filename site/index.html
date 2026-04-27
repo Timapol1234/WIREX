@@ -888,15 +888,14 @@ function updateSubStatusChip() {
 
 function buildClientDeepLinks(subUrl, vlessUrl, hy2Url, subSingboxUrl) {
     const enc = encodeURIComponent(subUrl);
-    // Happ Plus получает sing-box JSON с Russia-routing — российские сервисы
-    // ходят direct (минуя VPN), иначе банки/госуслуги блокируют. Остальные
-    // клиенты (V2Box / V2RayTun) импортируют обычную URL-подписку — у них
-    // routing настраивается клиентской стороной.
-    const happSrc = subSingboxUrl || subUrl;
+    // Все три клиента импортируют URL-подписку (списком VLESS/Hysteria URL).
+    // Happ Plus отказался от sing-box JSON — ему нужен либо URL-список,
+    // либо Happ-специфичный профиль. Routing для РФ-сервисов настраивается
+    // в самом Happ Plus: Settings → Routing → выбрать «Россия».
     return {
         v2box: `v2box://install-sub?url=${enc}&name=WIREX`,
         v2raytun: `v2raytun://import/${enc}`,
-        happ: `happ://add/${encodeURIComponent(happSrc)}`,
+        happ: `happ://add/${enc}`,
     };
 }
 
