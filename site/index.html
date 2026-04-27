@@ -633,16 +633,25 @@ Protected
 <div class="wx-skel wx-skel-tile"></div>
 </div>
 
-<div class="wx-card rounded-lg p-4 mb-4">
+<div id="payment-error" class="text-error text-xs mb-3 hidden"></div>
+
+<!-- Кнопка lava.top — видна если lava_enabled. Primary CTA. -->
+<button id="lava-pay-btn" class="hidden primary-gradient py-3.5 rounded-lg font-bold text-sm w-full active:scale-[0.98] transition-all mb-3 disabled:opacity-40 uppercase tracking-wider">
+<span id="lava-pay-btn-label">Оплатить картой</span>
+</button>
+
+<!-- Ручная оплата — fallback. Если lava включена, прячется под раскрывающийся блок. -->
+<details id="manual-pay-block" class="mb-4">
+<summary id="manual-pay-summary" class="text-xs text-on-surface-variant hover:text-primary cursor-pointer select-none uppercase tracking-wider font-semibold">Оплатить вручную (СБП / перевод)</summary>
+<div class="wx-card rounded-lg p-4 mt-3">
 <div class="text-[11px] text-primary font-bold uppercase tracking-[0.12em] mb-2">Реквизиты</div>
 <div id="payment-info" class="text-sm text-on-surface space-y-1.5 font-mono"></div>
 <div id="payment-note" class="text-[11px] text-on-surface-variant mt-3 pt-3 border-t border-outline-variant"></div>
-</div>
-
-<div id="payment-error" class="text-error text-xs mb-3 hidden"></div>
-<button id="i-paid-btn" class="primary-gradient py-3.5 rounded-lg font-bold text-sm w-full active:scale-[0.98] transition-all mb-4 disabled:opacity-40 uppercase tracking-wider">
+<button id="i-paid-btn" class="primary-gradient py-3 rounded-lg font-bold text-sm w-full active:scale-[0.98] transition-all mt-4 disabled:opacity-40 uppercase tracking-wider">
 <span id="i-paid-btn-label">Я оплатил — отправить на проверку</span>
 </button>
+</div>
+</details>
 
 <div class="border-t border-outline-variant pt-5">
 <label class="text-[11px] text-on-surface-variant font-semibold uppercase tracking-[0.12em]">Или промокод</label>
@@ -797,15 +806,13 @@ let countdownTimer = null;
 // Функция для показа уведомлений
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
-    toast.className = `fixed bottom-20 left-4 right-4 md:left-auto md:right-4 md:min-w-[300px] p-4 rounded-xl z-50 animate-slide-up ${
-        type === 'success' ? 'bg-green-500/90' : 'bg-red-500/90'
-    } text-white text-center font-medium`;
+    const bg = type === 'success' ? 'bg-green-500/90'
+             : type === 'info'    ? 'bg-cyan-500/90'
+             : 'bg-red-500/90';
+    toast.className = `fixed bottom-20 left-4 right-4 md:left-auto md:right-4 md:min-w-[300px] p-4 rounded-xl z-50 animate-slide-up ${bg} text-white text-center font-medium`;
     toast.textContent = message;
     document.body.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.remove();
-    }, 3000);
+    setTimeout(() => { toast.remove(); }, 3000);
 }
 
 function updateSendBtnState() {
@@ -1557,8 +1564,28 @@ function renderTariffGrid() {
             selectedTariffId = btn.dataset.tariff;
             renderTariffGrid();
             updateRenewalPreview();
+            updateLavaButton();
         };
     });
+}
+
+function updateLavaButton() {
+    // Кнопка lava видна только если бэк включён И тариф поддерживает оплату картой.
+    const btn = document.getElementById('lava-pay-btn');
+    const label = document.getElementById('lava-pay-btn-label');
+    const manual = document.getElementById('manual-pay-block');
+    if (!btn) return;
+    const tariff = tariffs.find(t => t.id === selectedTariffId);
+    const lavaOn = !!(paymentInfo && paymentInfo.lava_enabled && tariff && tariff.card_pay_enabled);
+    if (lavaOn) {
+        btn.classList.remove('hidden');
+        label.textContent = `Оплатить картой ${tariff.price}₽`;
+        // Если lava доступна — ручную оплату прячем под expander, иначе она видна как раньше.
+        if (manual && !manual.hasAttribute('data-toggled-by-user')) manual.removeAttribute('open');
+    } else {
+        btn.classList.add('hidden');
+        if (manual) manual.setAttribute('open', '');
+    }
 }
 
 function renderPaymentInfo() {
@@ -1634,10 +1661,101 @@ async function openPaymentModal() {
     renderTariffGrid();
     renderPaymentInfo();
     updateRenewalPreview();
+    updateLavaButton();
     document.getElementById('payment-error').classList.add('hidden');
     document.getElementById('promo-msg').classList.add('hidden');
     document.getElementById('promo-input').value = '';
     document.getElementById('payment-modal').classList.remove('hidden');
+}
+
+async function payViaLava() {
+    const err = document.getElementById('payment-error');
+    err.classList.add('hidden');
+    if (!selectedTariffId) {
+        err.textContent = 'Выберите тариф';
+        err.classList.remove('hidden');
+        return;
+    }
+    const btn = document.getElementById('lava-pay-btn');
+    const label = document.getElementById('lava-pay-btn-label');
+    const oldLabel = label.textContent;
+    btn.disabled = true;
+    label.textContent = 'Открываю lava.top…';
+    try {
+        const res = await fetch(`${API_URL}/api/payment/lava/create`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                // Idempotency-Key защищает от двойного клика — повторный запрос вернёт тот же invoice.
+                'Idempotency-Key': `lava-create-${selectedTariffId}-${Date.now()}`
+            },
+            body: JSON.stringify({ token: sessionToken, tariff: selectedTariffId })
+        });
+        const data = await res.json();
+        if (res.ok && data.payment_url) {
+            // Сохраняем contract_id, чтобы по возврату с lava подсветить статус.
+            try {
+                localStorage.setItem('wirex_pending_lava', JSON.stringify({
+                    contract_id: data.contract_id,
+                    tariff: selectedTariffId,
+                    started_at: Date.now()
+                }));
+            } catch (_) {}
+            window.location.href = data.payment_url;
+        } else {
+            err.textContent = data.error || 'Не удалось создать платёж';
+            err.classList.remove('hidden');
+            label.textContent = oldLabel;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        err.textContent = 'Ошибка соединения';
+        err.classList.remove('hidden');
+        label.textContent = oldLabel;
+        btn.disabled = false;
+    }
+}
+
+async function checkPendingLavaPayment() {
+    // Вызывается на загрузке страницы. Если в localStorage есть pending contract,
+    // поллим /api/payment/lava/status пока не credited / failed / 5 мин таймаут.
+    let pending;
+    try { pending = JSON.parse(localStorage.getItem('wirex_pending_lava') || 'null'); }
+    catch (_) { pending = null; }
+    if (!pending || !pending.contract_id || !sessionToken) return;
+    // Старше 30 минут — считаем заброшенным
+    if (Date.now() - (pending.started_at || 0) > 30 * 60 * 1000) {
+        localStorage.removeItem('wirex_pending_lava');
+        return;
+    }
+    showToast('Проверяем оплату…', 'info');
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < deadline) {
+        try {
+            const res = await fetch(`${API_URL}/api/payment/lava/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: sessionToken, contract_id: pending.contract_id })
+            });
+            if (res.ok) {
+                const d = await res.json();
+                if (d.status === 'credited') {
+                    localStorage.removeItem('wirex_pending_lava');
+                    showToast(`Оплата прошла! +${d.days} дней`, 'success');
+                    if (typeof loadMyKeys === 'function') loadMyKeys();
+                    return;
+                }
+                if (d.status === 'failed') {
+                    localStorage.removeItem('wirex_pending_lava');
+                    showToast('Оплата не прошла', 'error');
+                    return;
+                }
+            }
+        } catch (_) {}
+        await new Promise(r => setTimeout(r, 5000));
+    }
+    // 5 мин истекло — оставляем запись в localStorage, может позже подтянется
+    showToast('Оплата ещё обрабатывается. Обновите страницу через минуту.', 'info');
 }
 
 function closePaymentModal() {
@@ -1940,6 +2058,8 @@ async function checkSession() {
             document.getElementById('user-email-display').textContent = data.email;
             document.getElementById('logout-btn').classList.remove('hidden');
             loadMyKeys();
+            // Если юзер вернулся с lava после оплаты — поллим статус.
+            checkPendingLavaPayment();
         } else {
             localStorage.removeItem('session_token');
             localStorage.removeItem('user_email');
@@ -1961,6 +2081,11 @@ document.getElementById('create-first-btn')?.addEventListener('click', showServe
 document.getElementById('server-back-btn')?.addEventListener('click', loadMyKeys);
 document.getElementById('payment-close-btn')?.addEventListener('click', closePaymentModal);
 document.getElementById('i-paid-btn')?.addEventListener('click', submitPaymentRequest);
+document.getElementById('lava-pay-btn')?.addEventListener('click', payViaLava);
+document.getElementById('manual-pay-block')?.addEventListener('toggle', (e) => {
+    // Запоминаем что юзер сам открыл/закрыл блок ручной оплаты — больше не трогаем автоматически
+    e.currentTarget.setAttribute('data-toggled-by-user', '1');
+});
 document.getElementById('promo-btn')?.addEventListener('click', redeemPromo);
 document.getElementById('promo-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') redeemPromo();

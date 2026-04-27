@@ -19,6 +19,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from urllib.parse import quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 import sys
 import traceback
@@ -36,6 +38,12 @@ TRAFFIC_SNAPSHOT_FILE = "/opt/vpn-site/traffic_snapshot.json"
 SUBSCRIPTIONS_DB = "/opt/vpn-site/subscriptions.json"
 PAYMENT_REQUESTS_DB = "/opt/vpn-site/payment_requests.json"
 PROMO_CODES_DB = "/opt/vpn-site/promo_codes.json"
+LAVA_PAYMENTS_DB = "/opt/vpn-site/lava_payments.json"
+
+# lava.top API endpoints
+LAVA_API_BASE = "https://gate.lava.top"
+LAVA_INVOICE_CREATE = "/api/v3/invoice"
+LAVA_INVOICE_GET = "/api/v1/invoices/{id}"
 
 # Тарифы: дни → цена в рублях
 TARIFFS = {
@@ -126,6 +134,17 @@ SMTP_CONFIG = {
 }
 
 ADMIN_EMAIL = _secrets.get("admin_email", "")
+
+# lava.top: API-ключ берётся из кабинета (Profile → Integration → Public API).
+# `lava_offers` маппит наш id тарифа → uuid товара в кабинете lava
+# (товар на 99₽ создаётся отдельно в кабинете и должен совпадать с PRICING).
+# `lava_webhook_secret` — случайный токен в URL вебхука, защита от подделки.
+# `lava_success_url` — куда lava редиректит юзера после оплаты.
+LAVA_API_KEY = _secrets.get("lava_api_key", "")
+LAVA_WEBHOOK_SECRET = _secrets.get("lava_webhook_secret", "")
+LAVA_OFFERS = _secrets.get("lava_offers", {})  # {tariff_id: offer_uuid}
+LAVA_SUCCESS_URL = _secrets.get("lava_success_url", "https://wirex.online/?payment=success")
+
 ALERTS_STATE_FILE = "/opt/vpn-site/alerts_state.json"
 ALERTS_LOG_FILE = "/opt/vpn-site/alerts_log.json"
 ALERTS_COOLDOWN_SEC = 1800  # 30 мин между повторами того же набора проблем
@@ -1035,6 +1054,84 @@ def save_promo_codes(codes):
     _save_json(PROMO_CODES_DB, codes)
 
 
+# ---------- lava.top интеграция ----------
+
+def load_lava_payments():
+    return _load_json(LAVA_PAYMENTS_DB, {})
+
+
+def save_lava_payments(payments):
+    _save_json(LAVA_PAYMENTS_DB, payments)
+
+
+def _lava_request(method, path, body=None, timeout=15):
+    """Низкоуровневый вызов API lava.top. Возвращает (status, json_or_text).
+    Не кидает исключения на не-2xx — отдаём статус наверх для логики."""
+    if not LAVA_API_KEY:
+        return 0, {"error": "lava_api_key не сконфигурирован"}
+    url = f"{LAVA_API_BASE}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = Request(url, data=data, method=method)
+    req.add_header("X-Api-Key", LAVA_API_KEY)
+    req.add_header("Accept", "application/json")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                return resp.status, json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return resp.status, raw
+    except HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return e.code, raw
+    except URLError as e:
+        return 0, {"error": f"network: {e.reason}"}
+    except Exception as e:
+        return 0, {"error": f"{type(e).__name__}: {e}"}
+
+
+def lava_create_invoice(email, tariff_id):
+    """Создаёт invoice в lava.top для оплаты тарифа `tariff_id`. Возвращает
+    (contract_id, payment_url, error). На ошибку — (None, None, str)."""
+    offer_id = LAVA_OFFERS.get(tariff_id)
+    if not offer_id:
+        return None, None, f"Нет offer_id для тарифа {tariff_id}"
+    payload = {
+        "email": email,
+        "offerId": offer_id,
+        "currency": "RUB",
+        "paymentProvider": "SMART_GLOCAL",
+        "paymentMethod": "CARD",
+        "buyerLanguage": "RU",
+        "periodicity": "ONE_TIME",
+    }
+    status, body = _lava_request("POST", LAVA_INVOICE_CREATE, body=payload)
+    if status not in (200, 201):
+        err = (body.get("error") or body.get("message") or str(body)) if isinstance(body, dict) else str(body)
+        return None, None, f"lava {status}: {err}"
+    if not isinstance(body, dict):
+        return None, None, f"lava ответил не JSON: {body!r:.200}"
+    contract_id = body.get("id")
+    payment_url = body.get("paymentUrl")
+    if not contract_id or not payment_url:
+        return None, None, f"lava не вернул id/paymentUrl: {body!r:.200}"
+    return contract_id, payment_url, None
+
+
+def lava_fetch_invoice(contract_id):
+    """GET к lava.top — двойная проверка статуса. Webhook без подписи, поэтому
+    перед зачислением идём в lava с нашим API-ключом — фейк webhook'а это не пройдёт."""
+    status, body = _lava_request("GET", LAVA_INVOICE_GET.format(id=contract_id))
+    if status != 200 or not isinstance(body, dict):
+        return None
+    return body
+
+
 def _hy_log(msg):
     print(f"[hysteria] {msg}", file=sys.stderr, flush=True)
 
@@ -1623,7 +1720,7 @@ def api_suggest_username():
 @app.route("/api/tariffs", methods=["GET"])
 def api_tariffs():
     return jsonify([
-        {"id": key, **value}
+        {"id": key, **value, "card_pay_enabled": bool(LAVA_API_KEY and key in LAVA_OFFERS)}
         for key, value in TARIFFS.items()
     ])
 
@@ -1631,12 +1728,14 @@ def api_tariffs():
 @app.route("/api/payment-info", methods=["GET"])
 def api_payment_info():
     # Публичная инфа для ручной оплаты — берём из secrets.json, чтобы реквизиты не лежали в репе.
+    # `lava_enabled` — фронт включает кнопку «Оплатить картой», если бэк сконфигурирован.
     return jsonify({
         "sbp_phone": _secrets.get("sbp_phone", ""),
         "sbp_bank": _secrets.get("sbp_bank", ""),
         "card_number": _secrets.get("card_number", ""),
         "card_holder": _secrets.get("card_holder", ""),
         "note": _secrets.get("payment_note", "После оплаты нажмите «Я оплатил». Доступ откроется после подтверждения админом (обычно до 1 часа)."),
+        "lava_enabled": bool(LAVA_API_KEY and LAVA_OFFERS),
     })
 
 
@@ -1774,6 +1873,185 @@ def api_promo_redeem():
 
         sub = get_subscription(email)
     return jsonify({"ok": True, "subscription": sub, "days": days, "unlimited": unlimited})
+
+
+# ---------- lava.top: создание оплаты + webhook ----------
+
+# Маппинг paymentEventType из webhook lava → True если зачислять подписку.
+_LAVA_SUCCESS_EVENTS = {
+    "payment.success",
+    "subscription.recurring.payment.success",
+}
+_LAVA_SUCCESS_STATUSES = {
+    "completed",
+    "subscription-active",
+}
+
+
+@app.route("/api/payment/lava/create", methods=["POST"])
+@rate_limit(10, 60)
+@idempotent
+def api_payment_lava_create():
+    """Юзер выбирает тариф → мы создаём invoice в lava.top → возвращаем
+    payment_url, фронт делает window.location.href = payment_url."""
+    data = request.json or {}
+    session = get_session(data.get("token", ""))
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+
+    if not LAVA_API_KEY or not LAVA_OFFERS:
+        return jsonify({"error": "Платежи через карту временно недоступны"}), 503
+
+    tariff_id = data.get("tariff")
+    if tariff_id not in TARIFFS:
+        return jsonify({"error": "Неизвестный тариф"}), 400
+    if tariff_id not in LAVA_OFFERS:
+        return jsonify({"error": "Тариф недоступен для оплаты картой"}), 400
+
+    email = session["email"]
+    contract_id, payment_url, err = lava_create_invoice(email, tariff_id)
+    if err:
+        print(f"[lava] create_invoice failed for {email}/{tariff_id}: {err}")
+        return jsonify({"error": "Не удалось создать платёж. Попробуйте позже."}), 502
+
+    with _STATE_LOCK:
+        payments = load_lava_payments()
+        payments[contract_id] = {
+            "email": email,
+            "tariff": tariff_id,
+            "days": TARIFFS[tariff_id]["days"],
+            "amount": TARIFFS[tariff_id]["price"],
+            "status": "pending",
+            "created": datetime.now().isoformat(),
+            "credited_at": None,
+        }
+        save_lava_payments(payments)
+
+    return jsonify({
+        "ok": True,
+        "contract_id": contract_id,
+        "payment_url": payment_url,
+    })
+
+
+@app.route("/api/payment/lava/status", methods=["POST"])
+@rate_limit(60, 60)
+def api_payment_lava_status():
+    """Фронт после редиректа с lava.top пуляет сюда — узнать, прошёл ли webhook.
+    Если да — обновить UI ('подписка активна'). Чужой contract_id не выдаём."""
+    data = request.json or {}
+    session = get_session(data.get("token", ""))
+    if not session:
+        return jsonify({"error": "Сессия истекла"}), 401
+
+    contract_id = (data.get("contract_id") or "").strip()
+    if not contract_id:
+        return jsonify({"error": "contract_id обязателен"}), 400
+
+    payments = load_lava_payments()
+    p = payments.get(contract_id)
+    if not p or p.get("email") != session["email"]:
+        return jsonify({"error": "Платёж не найден"}), 404
+
+    return jsonify({
+        "status": p.get("status"),  # pending / credited / failed
+        "credited_at": p.get("credited_at"),
+        "tariff": p.get("tariff"),
+        "days": p.get("days"),
+        "amount": p.get("amount"),
+    })
+
+
+@app.route("/api/payment/lava/webhook/<secret>", methods=["POST"])
+def api_payment_lava_webhook(secret):
+    """Webhook от lava.top. Защита на двух уровнях:
+    1) Секрет в URL пути — должен совпасть с LAVA_WEBHOOK_SECRET.
+    2) После получения вебхука GET'им invoice через наш API-ключ — фейк
+       вебхука этого не пройдёт, потому что чужой не знает наш X-Api-Key.
+    Идемпотентность: если contract уже credited — просто 200 OK без действий."""
+    if not LAVA_WEBHOOK_SECRET or not hmac.compare_digest(secret, LAVA_WEBHOOK_SECRET):
+        # Не светим, что секрет не совпал — отвечаем как обычной 404.
+        return jsonify({"error": "Not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    event_type = payload.get("eventType") or ""
+    contract_id = payload.get("contractId") or ""
+    if not contract_id:
+        return jsonify({"error": "contractId обязателен"}), 400
+
+    # Двойная проверка через GET — не доверяем телу webhook'а слепо.
+    invoice = lava_fetch_invoice(contract_id)
+    if not invoice:
+        print(f"[lava-webhook] cannot fetch invoice {contract_id}")
+        return jsonify({"error": "cannot verify"}), 502
+
+    invoice_status = (invoice.get("status") or "").lower()
+    is_success = (event_type in _LAVA_SUCCESS_EVENTS) or (invoice_status in _LAVA_SUCCESS_STATUSES)
+
+    with _STATE_LOCK:
+        payments = load_lava_payments()
+        p = payments.get(contract_id)
+        if not p:
+            # Webhook прилетел до того как мы записали платёж в локальную БД,
+            # либо это вообще не наш платёж. Пытаемся восстановить по email из payload.
+            buyer_email = (payload.get("buyer") or {}).get("email") or invoice.get("buyer", {}).get("email")
+            if not buyer_email:
+                print(f"[lava-webhook] unknown contract {contract_id}, no buyer email — ignore")
+                return jsonify({"ok": True}), 200
+            p = {
+                "email": buyer_email.lower(),
+                "tariff": None,
+                "days": None,
+                "amount": None,
+                "status": "pending",
+                "created": datetime.now().isoformat(),
+                "credited_at": None,
+                "recovered": True,
+            }
+            payments[contract_id] = p
+
+        if p.get("status") == "credited":
+            return jsonify({"ok": True, "already_credited": True}), 200
+
+        if not is_success:
+            # неуспешный или промежуточный статус — фиксируем, но не зачисляем
+            p["status"] = "failed" if "fail" in event_type or invoice_status in ("failed", "cancelled") else "pending"
+            p["last_event"] = event_type
+            payments[contract_id] = p
+            save_lava_payments(payments)
+            return jsonify({"ok": True, "credited": False, "status": p["status"]}), 200
+
+        # Успех — определяем сколько дней. Сначала из локальной записи, иначе по сумме.
+        days = p.get("days")
+        if not days:
+            # Восстанавливаем по amount: ищем тариф с такой же ценой.
+            amt = (invoice.get("amountTotal") or {}).get("amount") or payload.get("amount")
+            try: amt = int(amt)
+            except Exception: amt = None
+            for tid, t in TARIFFS.items():
+                # Спека lava не уточняет: amount в рублях или копейках. Проверяем оба варианта.
+                if amt and (t["price"] == amt or t["price"] * 100 == amt):
+                    p["tariff"] = tid
+                    p["days"] = t["days"]
+                    p["amount"] = amt
+                    days = t["days"]
+                    break
+            if not days:
+                print(f"[lava-webhook] cannot determine days for {contract_id}, amount={amt}")
+                return jsonify({"error": "unknown tariff"}), 400
+
+        extend_subscription(p["email"], int(days))
+        p["status"] = "credited"
+        p["credited_at"] = datetime.now().isoformat()
+        p["last_event"] = event_type
+        payments[contract_id] = p
+        save_lava_payments(payments)
+
+    # Восстанавливаем ключи юзера в xray, если они были отключены.
+    _sync_user_xray_state(p["email"])
+
+    print(f"[lava-webhook] credited {p['email']} +{days}d (contract={contract_id})")
+    return jsonify({"ok": True, "credited": True}), 200
 
 
 # ---------- Админские эндпоинты для подписок/платежей/промокодов ----------
