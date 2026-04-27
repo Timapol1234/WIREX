@@ -11,6 +11,7 @@ import secrets
 import re
 import threading
 import time
+import hmac
 from functools import wraps
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -514,6 +515,12 @@ IDEM_TTL = 600
 IDEM_MAX_KEYS = 10000
 _idem_cache: dict = {}   # key -> (body_bytes, status_int, expires_at)
 _idem_lock = threading.Lock()
+
+# Глобальный lock для read-modify-write на JSON-стейте (users.json,
+# subscriptions.json, promo_codes.json, payment_requests.json).
+# Применяется точечно в горячих местах гонок (promo redeem) — не на каждой
+# ручке, иначе долгие SSH-операции залочат всё. На <100 юзеров одного лока хватает.
+_STATE_LOCK = threading.Lock()
 
 # Endpoint'ы, которые не надо троттлить глобально (health для мониторинга,
 # hy-auth — его дёргает сама Hysteria, может быть очень часто).
@@ -1671,23 +1678,24 @@ def api_subscription_request():
         return jsonify({"error": "Неизвестный тариф"}), 400
 
     email = session["email"]
-    items = load_payment_requests()
-
-    if any(r.get("email") == email and r.get("status") == "pending" for r in items):
-        return jsonify({"error": "У вас уже есть заявка в ожидании подтверждения"}), 400
-
     tariff = TARIFFS[tariff_id]
-    req = {
-        "id": secrets.token_urlsafe(8),
-        "email": email,
-        "tariff": tariff_id,
-        "days": tariff["days"],
-        "price": tariff["price"],
-        "status": "pending",
-        "created": datetime.now().isoformat(),
-    }
-    items.append(req)
-    save_payment_requests(items)
+
+    # Lock — иначе двойной клик/race создаст 2 pending-заявки.
+    with _STATE_LOCK:
+        items = load_payment_requests()
+        if any(r.get("email") == email and r.get("status") == "pending" for r in items):
+            return jsonify({"error": "У вас уже есть заявка в ожидании подтверждения"}), 400
+        req = {
+            "id": secrets.token_urlsafe(8),
+            "email": email,
+            "tariff": tariff_id,
+            "days": tariff["days"],
+            "price": tariff["price"],
+            "status": "pending",
+            "created": datetime.now().isoformat(),
+        }
+        items.append(req)
+        save_payment_requests(items)
     return jsonify({"ok": True, "request": req})
 
 
@@ -1723,54 +1731,66 @@ def api_promo_redeem():
     if not code:
         return jsonify({"error": "Введите промокод"}), 400
 
-    codes = load_promo_codes()
-    promo = codes.get(code)
-    if not promo:
-        return jsonify({"error": "Промокод не найден"}), 404
+    # Lock на всю операцию: иначе два параллельных запроса с одним промокодом
+    # оба пройдут проверку `email in used_by` и оба вызовут extend_subscription —
+    # юзер получит двойную подписку, а лимит max_uses обойдётся.
+    with _STATE_LOCK:
+        codes = load_promo_codes()
+        promo = codes.get(code)
+        if not promo:
+            return jsonify({"error": "Промокод не найден"}), 404
 
-    if promo.get("expires_at"):
-        try:
-            if datetime.fromisoformat(promo["expires_at"]) < datetime.now():
-                return jsonify({"error": "Срок промокода истёк"}), 400
-        except Exception:
-            pass
+        if promo.get("expires_at"):
+            try:
+                if datetime.fromisoformat(promo["expires_at"]) < datetime.now():
+                    return jsonify({"error": "Срок промокода истёк"}), 400
+            except Exception:
+                pass
 
-    max_uses = promo.get("max_uses") or 0
-    uses = promo.get("uses", 0)
-    if max_uses and uses >= max_uses:
-        return jsonify({"error": "Промокод уже использован"}), 400
+        max_uses = promo.get("max_uses") or 0
+        uses = promo.get("uses", 0)
+        if max_uses and uses >= max_uses:
+            return jsonify({"error": "Промокод уже использован"}), 400
 
-    used_by = promo.setdefault("used_by", [])
-    email = session["email"]
-    if email in used_by:
-        return jsonify({"error": "Вы уже активировали этот промокод"}), 400
+        used_by = promo.setdefault("used_by", [])
+        email = session["email"]
+        if email in used_by:
+            return jsonify({"error": "Вы уже активировали этот промокод"}), 400
 
-    days = int(promo.get("days", 0))
-    unlimited = bool(promo.get("unlimited"))
-    if not days and not unlimited:
-        return jsonify({"error": "Некорректный промокод"}), 400
+        days = int(promo.get("days", 0))
+        unlimited = bool(promo.get("unlimited"))
+        if not days and not unlimited:
+            return jsonify({"error": "Некорректный промокод"}), 400
 
-    if unlimited:
-        set_unlimited(email, True)
-    else:
-        extend_subscription(email, days)
+        if unlimited:
+            set_unlimited(email, True)
+        else:
+            extend_subscription(email, days)
 
-    used_by.append(email)
-    promo["uses"] = uses + 1
-    codes[code] = promo
-    save_promo_codes(codes)
+        used_by.append(email)
+        promo["uses"] = uses + 1
+        codes[code] = promo
+        save_promo_codes(codes)
 
-    sub = get_subscription(email)
+        sub = get_subscription(email)
     return jsonify({"ok": True, "subscription": sub, "days": days, "unlimited": unlimited})
 
 
 # ---------- Админские эндпоинты для подписок/платежей/промокодов ----------
 
 def _require_admin():
+    """Проверка пароля + IP-брутфорс на ВСЕХ админ-ручках (а не только /login).
+    Иначе атакующий мог бы перебирать пароль через любую /api/admin/* без лимита."""
+    ip = _get_client_ip()
+    allowed, wait = _admin_brute_check(ip)
+    if not allowed:
+        mins = wait // 60 + 1
+        return None, (jsonify({"error": f"Слишком много попыток. Подождите ~{mins} мин."}), 429)
     data = request.json or {}
-    if not (bool(ADMIN_PASSWORD) and data.get("password") == ADMIN_PASSWORD):
-        return None, (jsonify({"error": "Неверный пароль"}), 403)
-    return data, None
+    if _is_admin(data):
+        return data, None
+    _admin_brute_register_fail(ip)
+    return None, (jsonify({"error": "Неверный пароль"}), 403)
 
 
 @app.route("/api/admin/payments/list", methods=["POST"])
@@ -2021,7 +2041,12 @@ def _subscription_sweeper():
 
 
 def _is_admin(data):
-    return bool(ADMIN_PASSWORD) and data.get("password") == ADMIN_PASSWORD
+    # compare_digest — защита от timing attack. Сетевой шум маскирует разницу,
+    # но фикс ничего не стоит, поэтому он есть.
+    if not ADMIN_PASSWORD:
+        return False
+    pw = data.get("password") or ""
+    return hmac.compare_digest(pw, ADMIN_PASSWORD)
 
 
 @app.route("/admin")
@@ -2031,7 +2056,9 @@ def admin_page():
 
 @app.route("/api/admin/login", methods=["POST"])
 def admin_login():
-    ip = request.remote_addr or "unknown"
+    # _get_client_ip — за nginx remote_addr=127.0.0.1, без X-Forwarded-For
+    # все попытки делили бы один счётчик и брутфорс-защита превратилась бы в DoS-самоблокировку.
+    ip = _get_client_ip()
     allowed, wait = _admin_brute_check(ip)
     if not allowed:
         mins = wait // 60 + 1
@@ -2072,9 +2099,8 @@ def save_traffic_snapshot(snap):
 
 @app.route("/api/admin/stats", methods=["POST"])
 def admin_stats():
-    data = request.json or {}
-    if not _is_admin(data):
-        return jsonify({"error": "Неверный пароль"}), 403
+    data, err = _require_admin()
+    if err: return err
 
     users = load_users()
     snapshot = load_traffic_snapshot()
@@ -2295,6 +2321,10 @@ def admin_servers_add():
     name = (data.get("name") or "").strip()
     flag = (data.get("flag") or "").strip()
     ssh_user = (data.get("ssh_user") or "root").strip()
+    # ssh попадает в argv (не shell=True), но `-oProxyCommand=...` в роли user
+    # теоретически может быть интерпретирован OpenSSH'ем — фильтруем.
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", ssh_user):
+        return jsonify({"error": "Неверный ssh_user (a-z, 0-9, _-, до 32 симв)"}), 400
     backup_for = (data.get("backup_for") or "").strip() or None
     try:
         bandwidth_mbps = int(data.get("bandwidth_mbps") or 50)
@@ -2505,9 +2535,8 @@ def admin_backup_now():
 
 @app.route("/api/delete", methods=["POST"])
 def delete_user():
-    data = request.json
-    if not _is_admin(data):
-        return jsonify({"error": "Неверный пароль"}), 403
+    data, err = _require_admin()
+    if err: return err
 
     username = data.get("username", "")
     users = load_users()
