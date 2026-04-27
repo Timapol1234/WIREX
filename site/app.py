@@ -2532,14 +2532,11 @@ def delete_user():
 
     return jsonify({"ok": True})
 
-@app.route("/sub/<path:filename>")
+@app.route("/sub/<filename>")
 def serve_subscription(filename):
-    filepath = os.path.join(SUB_DIR, filename)
-    if not os.path.exists(filepath):
-        return "Not found", 404
-    with open(filepath, "r") as f:
-        content = f.read()
-    return content, 200, {"Content-Type": "text/plain"}
+    # send_from_directory нормализует путь и режет .. / абсолютные пути -> 404.
+    # Имя файла без слешей уже ограничено <filename> (не <path:>).
+    return send_from_directory(SUB_DIR, filename, mimetype="text/plain")
 
 ISSUE_LABELS = {
     "offline": "Сервер не отвечает",
