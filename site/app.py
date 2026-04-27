@@ -1435,11 +1435,13 @@ def build_xray_config(owner):
         user_keys = [owner]
 
     outbounds = []
+    proxy_tags = []
     for i, u in enumerate(user_keys):
         s = SERVERS.get(u.get("server"))
         if not s:
             continue
         tag = "proxy" if i == 0 else f"proxy-{i+1}"
+        proxy_tags.append(tag)
         outbounds.append({
             "tag": tag,
             "protocol": "vless",
@@ -1469,6 +1471,11 @@ def build_xray_config(owner):
     outbounds.append({"protocol": "freedom", "tag": "direct"})
     outbounds.append({"protocol": "blackhole", "tag": "block"})
 
+    # Если нет proxy-outbound'ов — балансер ничего не сможет выбрать.
+    # Делаем дефолт всех правил на direct (хотя такая ситуация почти нереальна).
+    if not proxy_tags:
+        proxy_tags = ["direct"]
+
     # Сайты, заблокированные внутри РФ или иноагентские медиа — их
     # обычное правило geosite:category-ru-direct увело бы мимо VPN
     # и они бы не открылись. Поэтому для них исключение: forced VPN.
@@ -1483,6 +1490,19 @@ def build_xray_config(owner):
 
     return {
         "log": {"loglevel": "warning"},
+        # Observatory пингует все proxy-outbound'ы каждую минуту — данные
+        # нужны leastLoad-балансеру чтобы выбрать быстрейший. Без observatory
+        # XrayCore выдаёт «not all dependencies are resolved».
+        "burstObservatory": {
+            "subjectSelector": proxy_tags,
+            "pingConfig": {
+                "connectivity": "",
+                "destination": "http://www.gstatic.com/generate_204",
+                "interval": "1m",
+                "sampling": 1,
+                "timeout": "3s",
+            },
+        },
         "inbounds": [
             {
                 "tag": "socks",
@@ -1531,7 +1551,10 @@ def build_xray_config(owner):
             "balancers": [{
                 "tag": "wirex_balancer",
                 "fallbackTag": "direct",
-                "selector": ["proxy"],  # выбирает любой outbound с тегом, начинающимся на "proxy"
+                # Явный список тегов вместо префикс-паттерна. С regex некоторые
+                # сборки XrayCore (как в Happ Plus 4.8.2) ругаются на
+                # «not all dependencies are resolved».
+                "selector": proxy_tags,
                 "strategy": {
                     "type": "leastLoad",
                     "settings": {
