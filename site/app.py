@@ -1445,14 +1445,50 @@ def pick_recommended_server():
     return best_key
 
 
-def pick_backup_server():
-    """Запасной сервер. Приоритет: серверу с is_backup=True, иначе amsterdam,
-    иначе первый активный."""
+def pick_backup_server(exclude=None):
+    """Запасной сервер. Приоритет: is_backup=True, иначе amsterdam,
+    иначе первый активный (исключая `exclude` если задан)."""
+    exclude = exclude or set()
     for key, s in SERVERS.items():
+        if key in exclude:
+            continue
         if s.get("is_backup") and not s.get("disabled"):
             return key
-    if "amsterdam" in SERVERS and not SERVERS["amsterdam"].get("disabled"):
+    if "amsterdam" in SERVERS and "amsterdam" not in exclude and not SERVERS["amsterdam"].get("disabled"):
         return "amsterdam"
+    for key, s in SERVERS.items():
+        if key in exclude:
+            continue
+        if not s.get("disabled"):
+            return key
+    # все исключены — fallback вернуть хоть что-то
+    for key, s in SERVERS.items():
+        if not s.get("disabled"):
+            return key
+    return None
+
+
+def pick_lte_server(exclude=None):
+    """LTE Обход — пока стуб: второй по загрузке после auto. Когда появятся
+    спец-серверы для white-list роутинга, заменим на pick из их пула."""
+    exclude = exclude or set()
+    users = load_users()
+    counts = {}
+    for u in users:
+        srv = u.get("server")
+        if srv:
+            counts[srv] = counts.get(srv, 0) + 1
+    candidates = []
+    for key, s in SERVERS.items():
+        if key in exclude or s.get("disabled"):
+            continue
+        max_u = max(capacity_for_server(s), 1)
+        load = counts.get(key, 0) / max_u
+        candidates.append((load, key))
+    if candidates:
+        candidates.sort()
+        return candidates[0][1]
+    # все исключены — fallback на любой активный
     for key, s in SERVERS.items():
         if not s.get("disabled"):
             return key
@@ -1534,25 +1570,23 @@ def _ensure_user_on_all_servers(owner):
 
 def build_user_subscription_3mode(owner):
     """Возвращает base64-encoded список из 3 vless URL — Auto/LTE/Backup —
-    для юзера. Использует один UUID owner-а (предполагается что зарегестрирован
-    на всех серверах через _ensure_user_on_all_servers)."""
+    каждый указывает на РАЗНЫЙ физический сервер, иначе Happ дедуплицирует.
+    UUID owner-а должен быть зарегестрирован на всех (через _ensure_user_on_all_servers)."""
     auto_key = pick_recommended_server()
-    backup_key = pick_backup_server()
-    # LTE пока стуб = тот же auto-сервер, но с отдельным тегом — когда появятся
-    # spec-серверы, переключим pick_lte_server() на их пул.
-    lte_key = auto_key
+    # LTE — другой сервер, не auto. Backup — третий, не auto и не lte.
+    lte_key = pick_lte_server(exclude={auto_key} if auto_key else None) if auto_key else None
+    backup_key = pick_backup_server(exclude={auto_key, lte_key} - {None})
 
     user_uuid = owner["uuid"]
     urls = []
     if auto_key:
         urls.append(build_vless_url(user_uuid, auto_key, name="WIREX Авто выбор | Самый быстрый"))
-    if lte_key:
+    if lte_key and lte_key != auto_key:
         urls.append(build_vless_url(user_uuid, lte_key, name="WIREX LTE Обход"))
-    if backup_key and backup_key != auto_key:
+    if backup_key and backup_key not in (auto_key, lte_key):
         urls.append(build_vless_url(user_uuid, backup_key, name="WIREX Запасной"))
-    elif backup_key:
-        # backup совпал с auto — всё равно показываем как отдельный entry
-        urls.append(build_vless_url(user_uuid, backup_key, name="WIREX Запасной"))
+    # Если серверов в SERVERS меньше 3, какие-то режимы могут совпадать —
+    # показываем только уникальные (Happ всё равно дедуплицирует одинаковые).
     return base64.b64encode("\n".join(urls).encode()).decode()
 
 
