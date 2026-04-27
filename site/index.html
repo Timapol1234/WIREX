@@ -781,6 +781,7 @@ Protected
 <script>
 let pendingEmail = '';
 let currentSubUrl = '';
+let currentSubSingboxUrl = '';
 let currentVlessUrl = '';
 let currentHy2Url = '';
 let userEmail = localStorage.getItem('user_email') || '';
@@ -885,17 +886,17 @@ function updateSubStatusChip() {
     chip.classList.remove('hidden');
 }
 
-function buildClientDeepLinks(subUrl, vlessUrl, hy2Url) {
+function buildClientDeepLinks(subUrl, vlessUrl, hy2Url, subSingboxUrl) {
     const enc = encodeURIComponent(subUrl);
-    // happ://add/<percent-encoded SUB_URL> — это формат, который ожидает Happ Plus
-    // (xraycore.org/misc/deeplink_proxy_clients). Раньше передавали base64
-    // от inline-конфигов — Happ интерпретировал это как URL и показывал
-    // «URL подписки не валидна». HTTP-подписку Happ принимает, но может
-    // показать предупреждение «небезопасная схема» — это не блокер.
+    // Happ Plus получает sing-box JSON с Russia-routing — российские сервисы
+    // ходят direct (минуя VPN), иначе банки/госуслуги блокируют. Остальные
+    // клиенты (V2Box / V2RayTun) импортируют обычную URL-подписку — у них
+    // routing настраивается клиентской стороной.
+    const happSrc = subSingboxUrl || subUrl;
     return {
         v2box: `v2box://install-sub?url=${enc}&name=WIREX`,
         v2raytun: `v2raytun://import/${enc}`,
-        happ: `happ://add/${enc}`,
+        happ: `happ://add/${encodeURIComponent(happSrc)}`,
     };
 }
 
@@ -904,7 +905,7 @@ document.getElementById('auto-import-btn')?.addEventListener('click', () => {
         showToast('Не нашёл ссылку подписки', 'error');
         return;
     }
-    const links = buildClientDeepLinks(currentSubUrl, currentVlessUrl, currentHy2Url);
+    const links = buildClientDeepLinks(currentSubUrl, currentVlessUrl, currentHy2Url, currentSubSingboxUrl);
     const v2box = document.getElementById('open-v2box');
     const v2raytun = document.getElementById('open-v2raytun');
     const happ = document.getElementById('open-happ');
@@ -1324,6 +1325,7 @@ function showResult(data, toastMessage) {
     document.getElementById('vless-url').textContent = data.vless_url;
     document.getElementById('sub-url').textContent = data.sub_url;
     currentSubUrl = data.sub_url || '';
+    currentSubSingboxUrl = data.sub_singbox_url || '';
     currentVlessUrl = data.vless_url || '';
     currentHy2Url = data.hysteria_url || '';
     document.getElementById('result-info').textContent = `${data.username} — ${data.server_name || data.server}`;

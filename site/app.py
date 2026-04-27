@@ -1420,6 +1420,76 @@ def sub_slug(username, user_uuid):
     return f"{username.lower()}_{user_uuid.split('-')[0]}"
 
 
+def build_singbox_config(user):
+    """Sing-box JSON config с Russia bypass routing.
+    Российские IP/сайты идут direct (минуя VPN) — иначе российские сервисы
+    (банки, госуслуги, маркетплейсы) блокируют запросы с зарубежных IP.
+    Используется Happ Plus / sing-box-based клиентами."""
+    server_key = user["server"]
+    s = SERVERS[server_key]
+    return {
+        "log": {"level": "warn"},
+        "dns": {
+            "servers": [
+                {"tag": "remote", "address": "https://1.1.1.1/dns-query", "detour": "wirex-out"},
+                {"tag": "local", "address": "8.8.8.8", "detour": "direct"},
+            ],
+            "rules": [
+                {"rule_set": "geosite-ru", "server": "local"},
+            ],
+            "final": "remote",
+            "strategy": "ipv4_only",
+        },
+        "outbounds": [
+            {
+                "type": "vless",
+                "tag": "wirex-out",
+                "server": s["ip"],
+                "server_port": int(s["port"]),
+                "uuid": user["uuid"],
+                "flow": "",
+                "tls": {
+                    "enabled": True,
+                    "server_name": s["sni"],
+                    "utls": {"enabled": True, "fingerprint": s.get("fp", "chrome")},
+                    "reality": {
+                        "enabled": True,
+                        "public_key": s["pbk"],
+                        "short_id": s["sid"],
+                    },
+                },
+            },
+            {"type": "direct", "tag": "direct"},
+            {"type": "block", "tag": "block"},
+        ],
+        "route": {
+            "rules": [
+                {"ip_is_private": True, "outbound": "direct"},
+                {"rule_set": "geoip-ru", "outbound": "direct"},
+                {"rule_set": "geosite-ru", "outbound": "direct"},
+            ],
+            "rule_set": [
+                {
+                    "type": "remote",
+                    "tag": "geoip-ru",
+                    "format": "binary",
+                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
+                    "download_detour": "direct",
+                },
+                {
+                    "type": "remote",
+                    "tag": "geosite-ru",
+                    "format": "binary",
+                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ru.srs",
+                    "download_detour": "direct",
+                },
+            ],
+            "final": "wirex-out",
+            "auto_detect_interface": True,
+        },
+    }
+
+
 def update_subscription(user_uuid, server_key, username, hysteria_password=None):
     """Пишет файл подписки. Если передан hysteria_password — добавляет hysteria2:// URL
     рядом с VLESS (клиент импортирует оба, выберет рабочий)."""
@@ -1479,7 +1549,9 @@ def build_key_data(user):
     username = user["username"]
     s = SERVERS[server_key]
     vless_url = build_vless_url(user["uuid"], server_key)
-    sub_url = f"https://{SUB_HOST}/sub/{sub_slug(username, user['uuid'])}"
+    slug = sub_slug(username, user["uuid"])
+    sub_url = f"https://{SUB_HOST}/sub/{slug}"
+    sub_singbox_url = f"https://{SUB_HOST}/sub-singbox/{slug}"
     data = {
         "uuid": user["uuid"],
         "username": username,
@@ -1489,6 +1561,7 @@ def build_key_data(user):
         "created": user.get("created", ""),
         "vless_url": vless_url,
         "sub_url": sub_url,
+        "sub_singbox_url": sub_singbox_url,
         "qr": generate_qr_base64(vless_url),
         "hysteria_url": None,
         "hysteria_qr": None,
@@ -2880,6 +2953,58 @@ def serve_subscription(filename):
     resp.headers["Support-Url"] = "https://wirex.online"
     if expire_ts:
         # total=0 в некоторых клиентах прячет блок «осталось»; ставим большое число
+        resp.headers["Subscription-Userinfo"] = (
+            f"upload=0; download=0; total=107374182400; expire={expire_ts}"
+        )
+    elif is_unlimited:
+        resp.headers["Subscription-Userinfo"] = "upload=0; download=0; total=107374182400"
+    return resp
+
+
+def _profile_meta_for_user(user):
+    """Возвращает (title_text, expire_ts, is_unlimited) для профиля юзера."""
+    title_text = "WIREX — Encrypted Access"
+    expire_ts = None
+    is_unlimited = False
+    sub = get_subscription((user.get("email") or "")) if user else None
+    if sub:
+        if sub.get("plan") == "unlimited":
+            is_unlimited = True
+            title_text = "WIREX — Encrypted Access · ∞"
+        elif sub.get("expires_at"):
+            try:
+                exp = datetime.fromisoformat(sub["expires_at"])
+                expire_ts = int(exp.timestamp())
+                title_text = f"WIREX — Encrypted Access · до {exp.strftime('%d.%m.%Y')}"
+            except Exception:
+                pass
+    return title_text, expire_ts, is_unlimited
+
+
+@app.route("/sub-singbox/<filename>")
+def serve_subscription_singbox(filename):
+    """Sing-box JSON config с Russia bypass routing — для Happ Plus и других
+    sing-box-based клиентов. Российские IP/сайты идут direct (минуя VPN),
+    иначе банки/госуслуги/маркетплейсы блокируют запросы с зарубежных IP."""
+    users = load_users()
+    user = next(
+        (u for u in users if sub_slug(u["username"], u["uuid"]) == filename),
+        None,
+    )
+    if not user:
+        return jsonify({"error": "Not found"}), 404
+
+    config = build_singbox_config(user)
+    body = json.dumps(config, indent=2, ensure_ascii=False)
+    resp = Response(body, mimetype="application/json")
+
+    title_text, expire_ts, is_unlimited = _profile_meta_for_user(user)
+    title_b64 = base64.b64encode(title_text.encode("utf-8")).decode("ascii")
+    resp.headers["Profile-Title"] = f"base64:{title_b64}"
+    resp.headers["Profile-Update-Interval"] = "6"
+    resp.headers["Profile-Web-Page-Url"] = "https://wirex.online"
+    resp.headers["Support-Url"] = "https://wirex.online"
+    if expire_ts:
         resp.headers["Subscription-Userinfo"] = (
             f"upload=0; download=0; total=107374182400; expire={expire_ts}"
         )
