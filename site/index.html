@@ -889,14 +889,14 @@ function updateSubStatusChip() {
 
 function buildClientDeepLinks(subUrl, vlessUrl, hy2Url, subXrayUrl) {
     const enc = encodeURIComponent(subUrl);
-    // Happ Plus получает Xray JSON — там балансер автовыбирает быстрейший
-    // сервер + Russia bypass routing (российские сайты идут direct, иначе
-    // банки/госуслуги блокируют). V2Box/V2RayTun — обычная URL-подписка.
-    const happSrc = subXrayUrl || subUrl;
+    // Все клиенты теперь импортируют URL-подписку с /sub/<file>: внутри
+    // 3 vless (Auto/LTE/Backup), Happ показывает их как 3 сервера в группе.
+    // Xray JSON отказались — у Happ XrayCore выдавал «not all dependencies
+    // resolved». /sub-xray/ остаётся для CLI sing-box / десктопов.
     return {
         v2box: `v2box://install-sub?url=${enc}&name=WIREX`,
         v2raytun: `v2raytun://import/${enc}`,
-        happ: `happ://add/${encodeURIComponent(happSrc)}`,
+        happ: `happ://add/${enc}`,
     };
 }
 
