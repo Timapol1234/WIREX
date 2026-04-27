@@ -2921,7 +2921,7 @@ def serve_subscription(filename):
     # Стандартные заголовки v2ray-подписки — клиенты (Happ Plus, V2Box, Hiddify,
     # sing-box) читают их и показывают красивое имя профиля вместо хоста + срок,
     # вместо `api.wirex.online`. Profile-Title д.б. base64-encoded UTF-8.
-    title_text = "WIREX — Encrypted Access"
+    title_text = "WIREX | Encrypted Access"
     expire_ts = None
     is_unlimited = False
     try:
@@ -2935,11 +2935,11 @@ def serve_subscription(filename):
             if sub:
                 if sub.get("plan") == "unlimited":
                     is_unlimited = True
-                    title_text = "WIREX — Encrypted Access · ∞"
+                    title_text = "WIREX | Доступ без срока"
                 elif sub.get("expires_at"):
                     exp = datetime.fromisoformat(sub["expires_at"])
                     expire_ts = int(exp.timestamp())
-                    title_text = f"WIREX — Encrypted Access · до {exp.strftime('%d.%m.%Y')}"
+                    title_text = f"WIREX | Доступ до {exp.strftime('%d.%m.%Y')}"
     except Exception:
         pass
 
@@ -2952,18 +2952,15 @@ def serve_subscription(filename):
     resp.headers["Profile-Web-Page-Url"] = "https://wirex.online"
     resp.headers["Support-Url"] = "https://wirex.online"
     if expire_ts:
-        # total=0 в некоторых клиентах прячет блок «осталось»; ставим большое число
-        resp.headers["Subscription-Userinfo"] = (
-            f"upload=0; download=0; total=107374182400; expire={expire_ts}"
-        )
-    elif is_unlimited:
-        resp.headers["Subscription-Userinfo"] = "upload=0; download=0; total=107374182400"
+        # Только expire — без upload/download/total. Иначе Happ показывает
+        # фейковый счётчик трафика «0n / 100GB». Тарифы у нас по времени, не по гигабайтам.
+        resp.headers["Subscription-Userinfo"] = f"expire={expire_ts}"
     return resp
 
 
 def _profile_meta_for_user(user):
     """Возвращает (title_text, expire_ts, is_unlimited) для профиля юзера."""
-    title_text = "WIREX — Encrypted Access"
+    title_text = "WIREX | Encrypted Access"
     expire_ts = None
     is_unlimited = False
     sub = get_subscription((user.get("email") or "")) if user else None
@@ -3005,11 +3002,7 @@ def serve_subscription_singbox(filename):
     resp.headers["Profile-Web-Page-Url"] = "https://wirex.online"
     resp.headers["Support-Url"] = "https://wirex.online"
     if expire_ts:
-        resp.headers["Subscription-Userinfo"] = (
-            f"upload=0; download=0; total=107374182400; expire={expire_ts}"
-        )
-    elif is_unlimited:
-        resp.headers["Subscription-Userinfo"] = "upload=0; download=0; total=107374182400"
+        resp.headers["Subscription-Userinfo"] = f"expire={expire_ts}"
     return resp
 
 ISSUE_LABELS = {
