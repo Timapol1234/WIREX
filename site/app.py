@@ -1449,25 +1449,22 @@ def pick_recommended_server():
 
 
 def pick_backup_server(exclude=None):
-    """Запасной сервер. Приоритет: is_backup=True, иначе amsterdam,
-    иначе первый активный (исключая `exclude` если задан)."""
+    """Запасной сервер. Приоритет: is_backup=True, иначе fi (Финляндия 2 —
+    пиннинг по решению владельца), иначе amsterdam, иначе первый активный."""
     exclude = exclude or set()
     for key, s in SERVERS.items():
-        if key in exclude:
-            continue
+        if key in exclude: continue
         if s.get("is_backup") and not s.get("disabled"):
             return key
-    if "amsterdam" in SERVERS and "amsterdam" not in exclude and not SERVERS["amsterdam"].get("disabled"):
-        return "amsterdam"
+    for fallback in ("fi", "amsterdam"):
+        if fallback in SERVERS and fallback not in exclude and not SERVERS[fallback].get("disabled"):
+            return fallback
     for key, s in SERVERS.items():
-        if key in exclude:
-            continue
-        if not s.get("disabled"):
-            return key
-    # все исключены — fallback вернуть хоть что-то
+        if key in exclude: continue
+        if not s.get("disabled"): return key
+    # все исключены — возвращаем что-нибудь активное
     for key, s in SERVERS.items():
-        if not s.get("disabled"):
-            return key
+        if not s.get("disabled"): return key
     return None
 
 
@@ -3270,28 +3267,33 @@ def delete_user():
 
 @app.route("/sub/<filename>")
 def serve_subscription(filename):
-    """Возвращает статический файл подписки (1 vless URL — конкретный сервер юзера)
-    + стандартные заголовки (Profile-Title, expire). Как было до 3-mode эксперимента."""
-    resp = send_from_directory(SUB_DIR, filename, mimetype="text/plain")
+    """3-mode подписка: WIREX Авто / WIREX LTE Обход / WIREX Запасной.
+    Slug = `username_uuid8`. Содержит base64(3 vless URL) — Happ Plus
+    показывает их как 3 сервера в группе через стрелочку.
+    Один UUID юзера регистрируется на всех активных серверах (лазили миграция)."""
+    # Спец-фолбэк: тестовая подписка _happ_test_3 — статический файл, не мешаем
+    if filename.startswith("_happ_test"):
+        if os.path.exists(os.path.join(SUB_DIR, filename)):
+            return send_from_directory(SUB_DIR, filename, mimetype="text/plain")
 
-    title_text = "WIREX - Encrypted Access"
-    expire_ts = None
-    try:
-        users = load_users()
-        owner = next(
-            (u for u in users if sub_slug(u["username"], u["uuid"]) == filename),
-            None,
-        )
-        if owner:
-            sub = get_subscription(owner.get("email", ""))
-            if sub and sub.get("plan") != "unlimited" and sub.get("expires_at"):
-                try:
-                    expire_ts = int(datetime.fromisoformat(sub["expires_at"]).timestamp())
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    users = load_users()
+    owner = next(
+        (u for u in users if sub_slug(u["username"], u["uuid"]) == filename),
+        None,
+    )
+    if not owner:
+        # Orphan slug (legacy file без записи в users.json) — отдадим статикой
+        if os.path.exists(os.path.join(SUB_DIR, filename)):
+            return send_from_directory(SUB_DIR, filename, mimetype="text/plain")
+        return "Not found", 404
 
+    # Лазили миграция: гарантируем UUID юзера на всех активных серверах
+    _ensure_user_on_all_servers(owner)
+
+    body = build_user_subscription_3mode(owner)
+    resp = Response(body, mimetype="text/plain")
+
+    title_text, expire_ts, _ = _profile_meta_for_user(owner)
     title_b64 = base64.b64encode(title_text.encode("utf-8")).decode("ascii")
     resp.headers["Profile-Title"] = f"base64:{title_b64}"
     resp.headers["Profile-Update-Interval"] = "6"
