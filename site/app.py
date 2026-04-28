@@ -3257,28 +3257,28 @@ def delete_user():
 
 @app.route("/sub/<filename>")
 def serve_subscription(filename):
-    """Динамическая 3-mode подписка. Slug = `username_uuid8`.
-    Возвращает base64(vless-Auto + vless-LTE + vless-Backup) — Happ показывает
-    их как 3 сервера в группе, юзер выбирает один. UUID юзера лазили
-    регестрируется на всех серверах (legacy-юзеры были только на одном)."""
-    users = load_users()
-    owner = next(
-        (u for u in users if sub_slug(u["username"], u["uuid"]) == filename),
-        None,
-    )
-    if not owner:
-        # Legacy/orphan slug: статический файл. Не должно случаться у активных юзеров.
-        if os.path.exists(os.path.join(SUB_DIR, filename)):
-            return send_from_directory(SUB_DIR, filename, mimetype="text/plain")
-        return "Not found", 404
+    """Возвращает статический файл подписки (1 vless URL — конкретный сервер юзера)
+    + стандартные заголовки (Profile-Title, expire). Как было до 3-mode эксперимента."""
+    resp = send_from_directory(SUB_DIR, filename, mimetype="text/plain")
 
-    # Гарантируем что UUID юзера зарегестрирован на всех активных серверах
-    _ensure_user_on_all_servers(owner)
+    title_text = "WIREX - Encrypted Access"
+    expire_ts = None
+    try:
+        users = load_users()
+        owner = next(
+            (u for u in users if sub_slug(u["username"], u["uuid"]) == filename),
+            None,
+        )
+        if owner:
+            sub = get_subscription(owner.get("email", ""))
+            if sub and sub.get("plan") != "unlimited" and sub.get("expires_at"):
+                try:
+                    expire_ts = int(datetime.fromisoformat(sub["expires_at"]).timestamp())
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
-    body = build_user_subscription_3mode(owner)
-    resp = Response(body, mimetype="text/plain")
-
-    title_text, expire_ts, _ = _profile_meta_for_user(owner)
     title_b64 = base64.b64encode(title_text.encode("utf-8")).decode("ascii")
     resp.headers["Profile-Title"] = f"base64:{title_b64}"
     resp.headers["Profile-Update-Interval"] = "6"
