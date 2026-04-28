@@ -126,6 +126,27 @@
             background-size: 48px 48px;
             background-position: center top;
             background-attachment: fixed;
+            position: relative;
+        }
+        /* Тёмная виньетка-оверлей: верх/низ затемняются для глубины,
+           центр остаётся чистым. pointer-events:none — клики проходят насквозь. */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background:
+                radial-gradient(ellipse 120% 60% at 50% 0%,   rgba(0,0,0,0.55) 0%, transparent 55%),
+                radial-gradient(ellipse 120% 60% at 50% 100%, rgba(0,0,0,0.65) 0%, transparent 55%),
+                radial-gradient(ellipse 70%  100% at 0%   50%, rgba(0,0,0,0.35) 0%, transparent 60%),
+                radial-gradient(ellipse 70%  100% at 100% 50%, rgba(0,0,0,0.35) 0%, transparent 60%);
+        }
+        /* Контент рендерим над оверлеем — modal/fixed-блоки с собственным z-index
+           (z-50 у Tailwind) их специфичность выше, останутся как были. */
+        body > main, body > header, body > footer, body > section, body > nav {
+            position: relative;
+            z-index: 1;
         }
         .font-headline { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
         .font-mono     { font-family: 'JetBrains Mono', ui-monospace, monospace; }
