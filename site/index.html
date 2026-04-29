@@ -1411,7 +1411,8 @@ async function loadMyKeys() {
         renderMyKeys();
         updateSubStatusChip();
     } catch (e) {
-        showToast('Ошибка загрузки', 'error');
+        console.error('[loadMyKeys] failed:', e);
+        showToast('Ошибка загрузки: ' + (e?.message || e), 'error');
     } finally {
         document.getElementById('my-keys-loading').classList.add('hidden');
     }
