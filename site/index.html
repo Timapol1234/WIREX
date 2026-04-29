@@ -1412,7 +1412,7 @@ async function loadMyKeys() {
         updateSubStatusChip();
     } catch (e) {
         console.error('[loadMyKeys] failed:', e);
-        showToast('Ошибка загрузки: ' + (e?.message || e), 'error');
+        showToast('Ошибка загрузки', 'error');
     } finally {
         document.getElementById('my-keys-loading').classList.add('hidden');
     }
@@ -1420,12 +1420,19 @@ async function loadMyKeys() {
     window.scrollTo({ top: document.getElementById('my-keys-section').offsetTop - 80, behavior: 'smooth' });
 }
 
+function subDaysLeft() {
+    if (!currentSub || !currentSub.expires_at) return 0;
+    try {
+        const d = new Date(currentSub.expires_at);
+        return Math.max(0, Math.ceil((d - new Date()) / 86400000));
+    } catch (e) { return 0; }
+}
+
 function subExpiresText() {
     if (!currentSub || !currentSub.expires_at) return '';
     try {
         const d = new Date(currentSub.expires_at);
-        const days = Math.max(0, Math.ceil((d - new Date()) / 86400000));
-        return `до ${d.toLocaleDateString('ru-RU')} · осталось ${days} дн.`;
+        return `до ${d.toLocaleDateString('ru-RU')} · осталось ${subDaysLeft()} дн.`;
     } catch (e) { return ''; }
 }
 
