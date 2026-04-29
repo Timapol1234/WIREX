@@ -1977,8 +1977,23 @@ def create_key():
 
     users = load_users()
     email_lc = session["email"].lower()
-    if any((u.get("email") or "").lower() == email_lc and u.get("server") == server_key for u in users):
-        return jsonify({"error": "У вас уже есть ключ на этом сервере. Замените его, чтобы пересоздать.", "code": "key_exists_on_server"}), 409
+
+    # Xray использует поле email (= username) как уникальный ID клиента в inbound.
+    # Если у юзера уже есть ключ с этим username, добавляем суффикс -2/-3/...,
+    # иначе add_to_xray затрёт первый ключ при `clients[:] = [x for x in clients if x['email'] != email]`.
+    existing_usernames = {
+        u.get("username") for u in users
+        if (u.get("email") or "").lower() == email_lc and u.get("username")
+    }
+    if username in existing_usernames:
+        base = re.sub(r"-\d+$", "", username)
+        n = 2
+        while f"{base}-{n}" in existing_usernames:
+            n += 1
+        suffix = f"-{n}"
+        if len(base) + len(suffix) > 32:
+            base = base[:32 - len(suffix)]
+        username = f"{base}{suffix}"
 
     max_users = capacity_for_server(SERVERS[server_key])
     server_user_count = sum(1 for u in users if u.get("server") == server_key)
