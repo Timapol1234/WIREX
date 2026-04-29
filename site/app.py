@@ -3375,9 +3375,10 @@ def serve_subscription(filename):
 
 
 def _profile_meta_for_user(user):
-    """Возвращает (title_text, expire_ts, is_unlimited). Title постоянный —
-    срок клиент покажет сам из Subscription-Userinfo expire=."""
-    title_text = "WIREX - Encrypted Access"
+    """Возвращает (title_text, expire_ts, is_unlimited). Title многострочный —
+    Happ Plus и большинство клиентов рендерят строки заголовком над списком
+    серверов. Subscription-Userinfo expire= отдаём отдельно для нативного
+    индикатора подписки в клиенте."""
     expire_ts = None
     is_unlimited = False
     sub = get_subscription((user.get("email") or "")) if user else None
@@ -3389,6 +3390,18 @@ def _profile_meta_for_user(user):
                 expire_ts = int(datetime.fromisoformat(sub["expires_at"]).timestamp())
             except Exception:
                 pass
+
+    lines = ["WIREX — Ваш защищённый доступ во все сервисы"]
+    if is_unlimited:
+        lines.append("Безлимитный доступ")
+    elif expire_ts:
+        exp_dt = datetime.fromtimestamp(expire_ts)
+        days_left = max(0, (exp_dt - datetime.now()).days)
+        lines.append(f"Подписка до {exp_dt.strftime('%d.%m.%Y')} · осталось {days_left} дн")
+    else:
+        lines.append("Подписка не активна")
+    lines.append("Поддержка: t.me/wirex.support")
+    title_text = "\n".join(lines)
     return title_text, expire_ts, is_unlimited
 
 
