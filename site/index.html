@@ -420,6 +420,11 @@ Welcome to<br><span>WIR<span class="text-primary">Σ</span>X</span>
 </div>
 
 <div id="my-keys-list" class="hidden grid grid-cols-1 gap-3"></div>
+
+<div id="keys-limit-hint" class="hidden mt-4 wx-card rounded-xl p-4 flex items-start gap-3">
+<span class="material-symbols-outlined text-on-surface-variant mt-0.5">info</span>
+<div class="text-xs text-on-surface-variant leading-relaxed">Достигнут лимит — 2 ключа на аккаунт. Чтобы создать ещё, нужен расширенный тариф (от 899 ₽).</div>
+</div>
 </div>
 </section>
 
@@ -1219,6 +1224,7 @@ async function refreshServersList() {
 }
 
 let myKeys = [];
+const MAX_KEYS_PER_USER = 2;  // Лимит: 2 ключа на юзера. Unlimited-план снимает лимит.
 let currentSub = null;
 let pendingRequest = null;
 let tariffs = [];
@@ -1752,12 +1758,13 @@ function renderMyKeys() {
     const list = document.getElementById('my-keys-list');
     const empty = document.getElementById('my-keys-empty');
     const newBtn = document.getElementById('new-key-btn');
+    const limitHint = document.getElementById('keys-limit-hint');
 
-    // 1 ключ на сервер: кнопка "Новый ключ" прячется, если на всех серверах уже есть ключи.
-    const totalServers = Object.keys(serversList).length;
-    const busy = new Set(myKeys.map(k => k.server));
-    const hasAvailable = Object.entries(serversList).some(([k, s]) => !busy.has(k) && !s.full);
-    if (newBtn) newBtn.classList.toggle('hidden', totalServers > 0 && !hasAvailable);
+    // Лимит: 2 ключа на юзера. Unlimited-план снимает лимит.
+    const isUnlimited = !!(currentSub && currentSub.active && currentSub.plan === 'unlimited');
+    const reachedLimit = !isUnlimited && myKeys.length >= MAX_KEYS_PER_USER;
+    if (newBtn) newBtn.classList.toggle('hidden', reachedLimit);
+    if (limitHint) limitHint.classList.toggle('hidden', !reachedLimit);
 
     if (!myKeys.length) {
         empty.classList.remove('hidden');
@@ -1770,12 +1777,9 @@ function renderMyKeys() {
     list.innerHTML = myKeys.map((k, i) => `
         <div class="wx-card p-5 rounded-xl flex flex-col">
             <div class="flex items-start justify-between gap-3 mb-4">
-                <div class="flex items-center gap-3 min-w-0">
-                    <div class="text-2xl flex-shrink-0">${k.server_flag || '🌐'}</div>
-                    <div class="min-w-0">
-                        <div class="font-headline font-bold text-base truncate">${escapeHtml(k.username)}</div>
-                        <div class="text-[11px] text-on-surface-variant uppercase tracking-wider mt-0.5">${escapeHtml(k.server_name)} · ${fmtDate(k.created)}</div>
-                    </div>
+                <div class="min-w-0">
+                    <div class="font-headline font-bold text-base truncate">${escapeHtml(k.username)}</div>
+                    <div class="text-[11px] text-on-surface-variant uppercase tracking-wider mt-0.5">${fmtDate(k.created)}</div>
                 </div>
                 <button class="text-on-surface-variant hover:text-error transition-colors flex-shrink-0" data-del="${i}" title="Удалить ключ" aria-label="Удалить">
                     <span class="material-symbols-outlined text-[20px]">delete</span>
@@ -1785,7 +1789,7 @@ function renderMyKeys() {
                 <button class="primary-gradient py-2.5 rounded-lg font-semibold text-xs active:scale-[0.98] transition-all uppercase tracking-wider inline-flex items-center justify-center gap-1.5" data-show="${i}">
                     <span class="material-symbols-outlined text-[14px]">qr_code_2</span> Открыть
                 </button>
-                <button class="border border-outline hover:border-primary hover:text-primary text-on-surface-variant py-2.5 rounded-lg font-semibold text-xs active:scale-[0.98] transition-colors uppercase tracking-wider inline-flex items-center justify-center gap-1.5" data-replace="${i}" title="Пересоздаст ключ на этом сервере">
+                <button class="border border-outline hover:border-primary hover:text-primary text-on-surface-variant py-2.5 rounded-lg font-semibold text-xs active:scale-[0.98] transition-colors uppercase tracking-wider inline-flex items-center justify-center gap-1.5" data-replace="${i}" title="Пересоздать ключ">
                     <span class="material-symbols-outlined text-[14px]">swap_horiz</span> Сменить
                 </button>
             </div>
@@ -1868,6 +1872,13 @@ async function createKey() {
             errorEl.textContent = 'Сессия истекла, войдите заново';
             errorEl.classList.remove('hidden');
             setTimeout(() => location.reload(), 1500);
+            return;
+        }
+
+        if (data.code === 'key_limit_reached') {
+            errorEl.classList.add('hidden');
+            loadMyKeys();
+            showToast(data.error || 'Достигнут лимит ключей', 'error');
             return;
         }
 

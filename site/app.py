@@ -63,6 +63,10 @@ OTP_RESEND_COOLDOWN = 60
 # Юзер считается online, если трафик рос в последние N секунд
 ONLINE_THRESHOLD_SECONDS = 120
 
+# Лимит ключей на юзера. Unlimited-план снимает лимит. Один UUID = один ключ
+# (после _ensure_user_on_all_servers UUID размазывается по всем серверам).
+MAX_KEYS_PER_USER = 2
+
 # Название бренда в имени ключа (показывается в VPN-клиенте как Remarks).
 # При переименовании сервиса достаточно поменять здесь.
 BRAND_NAME = "WIREX"
@@ -975,6 +979,24 @@ def get_subscription(email):
 def is_subscribed(email):
     s = get_subscription(email)
     return bool(s and s.get("active"))
+
+
+def is_unlimited(email):
+    s = get_subscription(email)
+    return bool(s and s.get("active") and s.get("plan") == "unlimited")
+
+
+def count_unique_keys(email):
+    """Уникальные UUID-ы юзера. Один UUID живёт на N серверах (одна запись
+    per server), но логически это один ключ."""
+    if not email:
+        return 0
+    email_lc = email.lower()
+    seen = set()
+    for u in load_users():
+        if (u.get("email") or "").lower() == email_lc and u.get("uuid"):
+            seen.add(u["uuid"])
+    return len(seen)
 
 
 def extend_subscription(email, days):
@@ -1933,6 +1955,12 @@ def create_key():
 
     if not is_subscribed(session["email"]):
         return jsonify({"error": "Нужна активная подписка. Оформите её, чтобы создать ключ.", "code": "subscription_required"}), 402
+
+    if not is_unlimited(session["email"]) and count_unique_keys(session["email"]) >= MAX_KEYS_PER_USER:
+        return jsonify({
+            "error": f"Достигнут лимит — {MAX_KEYS_PER_USER} ключа на аккаунт. Для большего нужен расширенный тариф (от 899 ₽).",
+            "code": "key_limit_reached",
+        }), 403
 
     # Если фронт не передал server — выбираем least-loaded автоматически.
     # При первом обращении к /sub/<file> _ensure_user_on_all_servers
