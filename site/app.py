@@ -1923,7 +1923,7 @@ def build_key_data(user):
 @idempotent
 def create_key():
     data = request.json
-    server_key = data.get("server")
+    server_key = data.get("server") or ""
     username = data.get("username", "").strip()
     token = data.get("token", "")
 
@@ -1934,6 +1934,11 @@ def create_key():
     if not is_subscribed(session["email"]):
         return jsonify({"error": "Нужна активная подписка. Оформите её, чтобы создать ключ.", "code": "subscription_required"}), 402
 
+    # Если фронт не передал server — выбираем least-loaded автоматически.
+    # При первом обращении к /sub/<file> _ensure_user_on_all_servers
+    # размажет UUID на остальные серверы (для 3-mode подписки).
+    if not server_key:
+        server_key = pick_recommended_server()
     if server_key not in SERVERS:
         return jsonify({"error": "Сервер не найден"}), 400
 
