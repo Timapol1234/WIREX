@@ -435,8 +435,8 @@ Welcome to<br><span>WIR<span class="text-primary">Σ</span>X</span>
 
 <div class="wx-card rounded-2xl p-6">
 <div id="create-error" class="text-error text-xs mb-3 hidden"></div>
-<button id="create-key-btn" class="primary-gradient py-3.5 rounded-lg font-bold text-base w-full active:scale-[0.98] transition-all uppercase tracking-wider inline-flex items-center justify-center gap-2">
-<span class="material-symbols-outlined text-[18px]">flash_on</span> Сгенерировать ключ
+<button id="create-key-btn" class="primary-gradient py-3.5 rounded-lg font-bold text-base w-full active:scale-[0.98] transition-all uppercase tracking-wider">
+Сгенерировать ключ
 </button>
 <input type="hidden" id="username" value="">
 </div>
@@ -1283,10 +1283,7 @@ async function showServerSection({ replaceKey = null } = {}) {
     if (title) title.textContent = isReplace ? 'Готовим новый ключ' : 'Готовим ключ';
     if (btn) {
         btn.disabled = false;
-        btn.querySelector('.material-symbols-outlined')?.remove?.();
-        const labelText = isReplace ? 'Заменить ключ' : 'Сгенерировать ключ';
-        // оставляем только текст (иконку добавит CSS если надо)
-        btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">flash_on</span> ${labelText}`;
+        btn.textContent = isReplace ? 'Заменить ключ' : 'Сгенерировать ключ';
     }
 
     const errorEl = document.getElementById('create-error');
@@ -1838,11 +1835,8 @@ async function createKey() {
     const errorEl = document.getElementById('create-error');
     const isReplace = !!replaceOldUuid;
 
-    if (!selectedServer) {
-        errorEl.textContent = 'Выберите сервер';
-        errorEl.classList.remove('hidden');
-        return;
-    }
+    // selectedServer не обязателен — backend сам выберет recommended-сервер
+    // если фронт не передаст его (auto-выбор по нагрузке).
 
     if (!sessionToken) {
         errorEl.textContent = 'Сессия не найдена, войдите заново';
