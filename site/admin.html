@@ -873,7 +873,13 @@ function renderUsers() {
     return;
   }
 
-  body.innerHTML = filtered.map(u => `
+  body.innerHTML = filtered.map(u => {
+    // Список серверов: флаги + tooltip с названием. Один UUID может сидеть на N серверах.
+    const servers = Array.isArray(u.servers) ? u.servers : (u.server ? [{key: u.server, name: u.server_name, flag: u.server_flag}] : []);
+    const serversCell = servers.length
+      ? servers.map(s => `<span title="${escapeHtml(s.name || s.key)}" class="inline-block mr-1 text-base" style="line-height:1">${s.flag || ''}</span>`).join('') + ` <span class="text-[10px] text-on-surface-variant">×${servers.length}</span>`
+      : '—';
+    return `
     <tr>
       <td>
         <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${u.online ? 'text-success' : 'text-on-surface-variant'}">
@@ -883,14 +889,14 @@ function renderUsers() {
       </td>
       <td class="font-semibold">${escapeHtml(u.username)}</td>
       <td class="text-on-surface-variant">${escapeHtml(u.email || '—')}</td>
-      <td>${u.server_flag || ''} ${escapeHtml(u.server_name || u.server)}</td>
+      <td>${serversCell}</td>
       <td class="text-on-surface-variant text-xs">${fmtDate(u.created)}</td>
       <td class="font-mono">${fmtBytes(u.traffic_up)}</td>
       <td class="font-mono">${fmtBytes(u.traffic_down)}</td>
       <td class="font-mono font-semibold">${fmtBytes(u.traffic_up + u.traffic_down)}</td>
-      <td><button class="btn-danger" data-del-uuid="${escapeHtml(u.uuid || '')}" data-del-name="${escapeHtml(u.username)}" data-del-server="${escapeHtml(u.server_name || u.server || '')}">Удалить</button></td>
-    </tr>
-  `).join('');
+      <td><button class="btn-danger" data-del-uuid="${escapeHtml(u.uuid || '')}" data-del-name="${escapeHtml(u.username)}" data-del-server="${escapeHtml('все серверы')}">Удалить</button></td>
+    </tr>`;
+  }).join('');
 
   body.querySelectorAll('[data-del-uuid]').forEach(btn => {
     btn.onclick = () => deleteUser(btn.dataset.delUuid, btn.dataset.delName, btn.dataset.delServer);

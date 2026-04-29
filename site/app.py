@@ -2806,64 +2806,81 @@ def admin_stats():
     now = datetime.now()
     now_iso = now.isoformat()
 
-    # Один запрос статистики на сервер, затем выбираем per-user
+    # Один запрос статистики на каждый сервер
     stats_by_server = {}
     for srv_key in SERVERS:
         stats_by_server[srv_key] = query_xray_stats(srv_key)
 
-    result = []
+    # Агрегация: один UUID = один юзер. После _ensure_user_on_all_servers
+    # тот же UUID лежит на N серверах — N записей в users.json. В админке
+    # юзер логически один, надо собрать в строку.
     new_snapshot = {}
+    by_uuid = {}  # uuid -> aggregated dict
 
     for u in users:
         username = u["username"]
         srv_key = u["server"]
+        uuid_key = u.get("uuid") or f"_legacy_{username}"
         srv_stats = stats_by_server.get(srv_key, {})
         traffic = srv_stats.get(username, {"up": 0, "down": 0})
 
-        prev = snapshot.get(username, {})
+        # Per-server snapshot для расчёта last_active по конкретному ключу
+        snap_key = f"{username}@{srv_key}"
+        prev = snapshot.get(snap_key) or snapshot.get(username, {})
         prev_total = prev.get("up", 0) + prev.get("down", 0)
         curr_total = traffic["up"] + traffic["down"]
+        last_active = now_iso if curr_total > prev_total else prev.get("last_active")
+        new_snapshot[snap_key] = {
+            "up": traffic["up"],
+            "down": traffic["down"],
+            "last_active": last_active,
+        }
 
-        if curr_total > prev_total:
-            last_active = now_iso
-        else:
-            last_active = prev.get("last_active")
+        agg = by_uuid.get(uuid_key)
+        if not agg:
+            agg = {
+                "username": username,
+                "uuid": u.get("uuid", ""),
+                "email": u.get("email", "—"),
+                "created": u.get("created", ""),
+                "traffic_up": 0,
+                "traffic_down": 0,
+                "online": False,
+                "last_active": None,
+                "servers": [],  # список где UUID зарегестрирован
+            }
+            by_uuid[uuid_key] = agg
 
-        online = False
+        agg["traffic_up"] += traffic["up"]
+        agg["traffic_down"] += traffic["down"]
+        agg["servers"].append({
+            "key": srv_key,
+            "name": SERVERS[srv_key]["name"],
+            "flag": SERVERS[srv_key]["flag"],
+            "traffic_up": traffic["up"],
+            "traffic_down": traffic["down"],
+        })
+
+        # online если активен на любом сервере
         if last_active:
             try:
                 delta = (now - datetime.fromisoformat(last_active)).total_seconds()
-                online = delta < ONLINE_THRESHOLD_SECONDS
+                if delta < ONLINE_THRESHOLD_SECONDS:
+                    agg["online"] = True
+                # самое свежее last_active
+                if not agg["last_active"] or last_active > agg["last_active"]:
+                    agg["last_active"] = last_active
             except Exception:
-                online = False
-
-        new_snapshot[username] = {
-            "up": traffic["up"],
-            "down": traffic["down"],
-            "last_active": last_active
-        }
-
-        result.append({
-            "username": username,
-            "uuid": u.get("uuid", ""),
-            "email": u.get("email", "—"),
-            "server": srv_key,
-            "server_name": SERVERS[srv_key]["name"],
-            "server_flag": SERVERS[srv_key]["flag"],
-            "created": u.get("created", ""),
-            "traffic_up": traffic["up"],
-            "traffic_down": traffic["down"],
-            "online": online,
-            "last_active": last_active,
-        })
+                pass
 
     save_traffic_snapshot(new_snapshot)
 
+    result = list(by_uuid.values())
     result.sort(key=lambda x: (not x["online"], -(x["traffic_up"] + x["traffic_down"])))
 
     return jsonify({
         "users": result,
-        "total": len(users),
+        "total": len(result),
         "online_count": sum(1 for u in result if u["online"]),
     })
 
@@ -3238,35 +3255,40 @@ def delete_user():
     data, err = _require_admin()
     if err: return err
 
-    # Приоритет — uuid (уникален). Username используется как fallback для legacy
-    # вызовов, но у одного email может быть несколько ключей на разных серверах,
-    # и поиск только по username удалял первый попавшийся, не тот что админ кликнул.
+    # Удаление по UUID — после миграции один UUID живёт на N серверах,
+    # удаляем со ВСЕХ. Админка теперь показывает одну строку на UUID.
     target_uuid = (data.get("uuid") or "").strip()
     username = (data.get("username") or "").strip()
     users = load_users()
     if target_uuid:
-        user = next((u for u in users if u.get("uuid") == target_uuid), None)
+        matching = [u for u in users if u.get("uuid") == target_uuid]
     elif username:
-        user = next((u for u in users if (u.get("username") or "").lower() == username.lower()), None)
+        # Legacy fallback — удаляем все записи с этим username
+        matching = [u for u in users if (u.get("username") or "").lower() == username.lower()]
     else:
         return jsonify({"error": "Нужен uuid или username"}), 400
 
-    if not user:
+    if not matching:
         return jsonify({"error": "Пользователь не найден"}), 404
 
-    server_key = user["server"]
+    errors = []
+    for u in matching:
+        try:
+            remove_from_xray(u["uuid"], u["server"])
+        except Exception as e:
+            errors.append(f'{u["server"]}: {e}')
+        sub_path = os.path.join(SUB_DIR, sub_slug(u["username"], u["uuid"]))
+        if os.path.exists(sub_path):
+            try: os.remove(sub_path)
+            except Exception: pass
 
-    try:
-        remove_from_xray(user["uuid"], server_key)
-    except Exception as e:
-        return jsonify({"error": f"Ошибка удаления из Xray: {str(e)}"}), 500
-
-    sub_path = os.path.join(SUB_DIR, sub_slug(user["username"], user["uuid"]))
-    if os.path.exists(sub_path):
-        os.remove(sub_path)
-
-    users = [u for u in users if u["uuid"] != user["uuid"]]
+    # Удаляем все записи с этим UUID (или username)
+    keep_uuid = matching[0]["uuid"]
+    users = [u for u in users if u.get("uuid") != keep_uuid]
     save_users(users)
+
+    if errors:
+        return jsonify({"ok": True, "warnings": errors, "deleted_servers": len(matching)}), 200
 
     return jsonify({"ok": True})
 
