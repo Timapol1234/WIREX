@@ -3435,14 +3435,15 @@ def _set_happ_announce(resp, expire_ts, is_unlimited):
 # импортированный профиль, только если LastUpdated в пришедшем JSON больше
 # того, что у него локально. Берём сильно больше, чем у RoscomVPN (1777529512),
 # чтобы наш профиль выиграл при коллизии. См. https://happ.mintlify.app/technical-docs/routing
-HAPP_RU_BYPASS_LASTUPDATED = 1800000000  # ≈2027-01
+HAPP_RU_BYPASS_LASTUPDATED = 1800000001  # bump 3 — minimized profile
 
-# Базируется на проверенном конфиге RoscomVPN (DEFAULT.JSON):
-# https://github.com/hydraponique/roscomvpn-routing/blob/main/HAPP/DEFAULT.JSON
-# — у Loyalsoldier/runetfreedom нет нужных категорий типа geosite:category-ru,
-# а у RoscomVPN свои geo-базы под РФ-сценарий (jsdelivr CDN, pinned версии).
-# Wildberries / Ozon / Yandex Go идут через geosite:category-ru → direct,
-# YouTube / Telegram через geosite:youtube/telegram → proxy.
+# Базируется на конфиге RoscomVPN (DEFAULT.JSON), но УПРОЩЁН:
+# - geo-файлы без pinned-версии (jsdelivr тянет свежий master, иначе старые
+#   снапшоты не содержат части категорий и XrayCore падает с ошибкой
+#   "geosite.dat: отсутствует секция X").
+# - BlockSites/игровые/twitch-ads убраны — они не критичны для основной
+#   задачи (РФ-сервисы direct), но из-за них Happ ругается на отсутствующие
+#   секции при загрузке. Если понадобятся — добавим точечно с проверкой.
 HAPP_RU_BYPASS_PROFILE = {
     "Name": "WIREX Russia",
     "GlobalProxy": "true",
@@ -3455,8 +3456,8 @@ HAPP_RU_BYPASS_PROFILE = {
     "DomesticDNSType": "DoH",
     "DomesticDNSDomain": "https://77.88.8.8/dns-query",
     "DomesticDNSIP": "77.88.8.8",
-    "Geoipurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geoip@202604300611/release/geoip.dat",
-    "Geositeurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geosite@202604152235/release/geosite.dat",
+    "Geoipurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geoip/release/geoip.dat",
+    "Geositeurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geosite/release/geosite.dat",
     "LastUpdated": str(HAPP_RU_BYPASS_LASTUPDATED),
     # Налоговая (lkfl2/lknpd.nalog.ru) часто ломается без явного DNS-override.
     "DnsHosts": {
@@ -3464,42 +3465,24 @@ HAPP_RU_BYPASS_PROFILE = {
         "lknpd.nalog.ru": "213.24.64.181",
     },
     "RouteOrder": "block-proxy-direct",
-    # Direct: РФ-домены, whitelist + сервисы которые отбивают зарубежный IP
-    # (Microsoft Store, Apple, Steam, Epic, Riot, Twitch, Pinterest, Faceit).
     "DirectSites": [
         "geosite:private",
         "geosite:category-ru",
         "geosite:whitelist",
         "geosite:microsoft",
         "geosite:apple",
-        "geosite:epicgames",
-        "geosite:riot",
-        "geosite:escapefromtarkov",
         "geosite:steam",
-        "geosite:twitch",
-        "geosite:pinterest",
-        "geosite:faceit",
     ],
     "DirectIp": [
         "geoip:private",
         "geoip:direct",
     ],
-    # Явно через VPN — заблокированное в РФ (даже если домен под другие правила
-    # подпадает, эти переопределяют благодаря RouteOrder).
     "ProxySites": [
-        "geosite:google-play",
-        "geosite:github",
-        "geosite:twitch-ads",
         "geosite:youtube",
         "geosite:telegram",
     ],
     "ProxyIp": [],
-    # Bonus — реклама / торренты / Windows телеметрия блокируются.
-    "BlockSites": [
-        "geosite:win-spy",
-        "geosite:torrent",
-        "geosite:category-ads",
-    ],
+    "BlockSites": [],
     "BlockIp": [],
     "DomainStrategy": "IPIfNonMatch",
     "FakeDNS": "false",
