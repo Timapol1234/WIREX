@@ -3373,21 +3373,23 @@ def serve_subscription(filename):
     resp.headers["Support-Url"] = "tg://resolve?domain=wirex"
     # Полный набор полей Subscription-Userinfo — Happ Plus рендерит синий
     # инфо-блок с иконкой "i" только когда есть upload/download/total.
-    # Без них блок не показывается и многострочный Profile-Title пропадает.
     # total=10TB — фиктивный лимит, чтобы прогресс-бар не выглядел исчерпанным.
     ui_fields = ["upload=0", "download=0", "total=10995116277760"]
     if expire_ts:
         ui_fields.append(f"expire={expire_ts}")
     resp.headers["Subscription-Userinfo"] = "; ".join(ui_fields)
+    # Текст внутри синего инфо-блока — header `announce` в Happ Plus.
+    _, _, is_unlimited = _profile_meta_for_user(owner)
+    _set_happ_announce(resp, expire_ts, is_unlimited)
     return resp
 
 
 def _profile_meta_for_user(user):
-    """Возвращает (title_text, expire_ts, is_unlimited). Title многострочный —
-    Happ Plus при наличии Subscription-Userinfo с upload/download/total рендерит
-    синий инфо-блок с иконкой "i", и многострочный Profile-Title оказывается
-    внутри этого блока (как у Velvet VPN). 1-я строка — короткий бренд,
-    остальные — описание/срок/поддержка."""
+    """Возвращает (title_text, expire_ts, is_unlimited). Title короткий,
+    одной строкой — Happ показывает его в свёрнутой шапке. Описание / срок
+    подписки / поддержка идут отдельным header `announce` (см. _announce_text_for_user),
+    который у Happ Plus рендерится синим инфо-блоком с иконкой "i"."""
+    title_text = "WIREX - Encrypted Access"
     expire_ts = None
     is_unlimited = False
     sub = get_subscription((user.get("email") or "")) if user else None
@@ -3399,7 +3401,13 @@ def _profile_meta_for_user(user):
                 expire_ts = int(datetime.fromisoformat(sub["expires_at"]).timestamp())
             except Exception:
                 pass
+    return title_text, expire_ts, is_unlimited
 
+
+def _announce_text_for_user(expire_ts, is_unlimited):
+    """Текст для header `announce` — Happ Plus отображает его внутри синего
+    инфо-блока с иконкой "i" (https://www.happ.su/main/dev-docs/meta-info).
+    Лимит ~200 символов отображаемых, остальное Happ обрежет."""
     if is_unlimited:
         sub_line = "♾️ Безлимитный доступ"
     elif expire_ts:
@@ -3408,16 +3416,18 @@ def _profile_meta_for_user(user):
         sub_line = f"⏳ Подписка до {exp_dt.strftime('%d.%m.%Y')} · {days_left} дн"
     else:
         sub_line = "⚠️ Подписка не активна"
-
-    lines = [
-        "WIREX - Encrypted Access",
+    return "\n".join([
         "🚀 WIREX — Ваш защищённый доступ во все сервисы",
-        "📡 Telegram, ChatGPT, Spotify, YouTube и другие",
         sub_line,
         "🛟 Поддержка: t.me/wirex.support",
-    ]
-    title_text = "\n".join(lines)
-    return title_text, expire_ts, is_unlimited
+    ])
+
+
+def _set_happ_announce(resp, expire_ts, is_unlimited):
+    """Ставит header `announce` (base64) — синий инфо-блок Happ Plus."""
+    text = _announce_text_for_user(expire_ts, is_unlimited)
+    b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    resp.headers["announce"] = f"base64:{b64}"
 
 
 @app.route("/sub-xray/<filename>")
@@ -3437,20 +3447,20 @@ def serve_subscription_xray(filename):
     body = json.dumps(config, indent=2, ensure_ascii=False)
     resp = Response(body, mimetype="application/json")
 
-    title_text, expire_ts, _ = _profile_meta_for_user(owner)
+    title_text, expire_ts, is_unlimited = _profile_meta_for_user(owner)
     title_b64 = base64.b64encode(title_text.encode("utf-8")).decode("ascii")
     resp.headers["Profile-Title"] = f"base64:{title_b64}"
     resp.headers["Profile-Update-Interval"] = "6"
     # Поддержка через Telegram — клиент рендерит как кнопку с tg-значком
     resp.headers["Profile-Web-Page-Url"] = "https://t.me/wirex"
     resp.headers["Support-Url"] = "tg://resolve?domain=wirex"
-    # total=0 — клиент покажет «X / ∞» вместо фейкового лимита
+    # total=10TB чтобы Happ нарисовал инфо-блок с прогресс-баром (иначе блок
+    # вообще не появится и `announce` ниже тоже не покажется).
+    ui_fields = ["upload=0", "download=0", "total=10995116277760"]
     if expire_ts:
-        resp.headers["Subscription-Userinfo"] = (
-            f"upload=0; download=0; total=0; expire={expire_ts}"
-        )
-    else:
-        resp.headers["Subscription-Userinfo"] = "upload=0; download=0; total=0"
+        ui_fields.append(f"expire={expire_ts}")
+    resp.headers["Subscription-Userinfo"] = "; ".join(ui_fields)
+    _set_happ_announce(resp, expire_ts, is_unlimited)
     return resp
 
 
@@ -3477,8 +3487,11 @@ def serve_subscription_singbox(filename):
     resp.headers["Profile-Update-Interval"] = "6"
     resp.headers["Profile-Web-Page-Url"] = "https://wirex.online"
     resp.headers["Support-Url"] = "https://wirex.online"
+    ui_fields = ["upload=0", "download=0", "total=10995116277760"]
     if expire_ts:
-        resp.headers["Subscription-Userinfo"] = f"expire={expire_ts}"
+        ui_fields.append(f"expire={expire_ts}")
+    resp.headers["Subscription-Userinfo"] = "; ".join(ui_fields)
+    _set_happ_announce(resp, expire_ts, is_unlimited)
     return resp
 
 ISSUE_LABELS = {
