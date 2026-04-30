@@ -3381,6 +3381,7 @@ def serve_subscription(filename):
     # Текст внутри синего инфо-блока — header `announce` в Happ Plus.
     _, _, is_unlimited = _profile_meta_for_user(owner)
     _set_happ_announce(resp, expire_ts, is_unlimited)
+    _set_happ_routing(resp)
     return resp
 
 
@@ -3430,6 +3431,65 @@ def _set_happ_announce(resp, expire_ts, is_unlimited):
     resp.headers["announce"] = f"base64:{b64}"
 
 
+# Bump на единицу когда меняется HAPP_RU_BYPASS_PROFILE — Happ Plus обновляет
+# уже импортированный профиль, только если LastUpdated в пришедшем JSON больше
+# того, что у него локально (https://happ.mintlify.app/technical-docs/routing).
+HAPP_RU_BYPASS_LASTUPDATED = 1745366400  # 2026-04-23 UTC
+
+HAPP_RU_BYPASS_PROFILE = {
+    "Name": "WIREX Russia",
+    # GlobalProxy=true → дефолтное правило "всё через прокси", DirectSites/Ip
+    # выводят за этот забор только то, что нужно (РФ-сайты и приватные сети).
+    "GlobalProxy": "true",
+    # DNS для трафика, идущего через VPN: Cloudflare (через туннель доходит).
+    "RemoteDNSType": "DoH",
+    "RemoteDNSDomain": "https://cloudflare-dns.com/dns-query",
+    "RemoteDNSIP": "1.1.1.1",
+    # DNS для direct (РФ) трафика: Yandex — в РФ работает надёжнее Google/Cloudflare.
+    "DomesticDNSType": "DoH",
+    "DomesticDNSDomain": "https://common.dns.yandex.net/dns-query",
+    "DomesticDNSIP": "77.88.8.8",
+    "Geoipurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+    "Geositeurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+    "DnsHosts": {
+        "cloudflare-dns.com": "1.1.1.1",
+        "common.dns.yandex.net": "77.88.8.8",
+    },
+    # Эти домены/IP идут НАПРЯМУЮ, не через VPN — иначе банки/госуслуги/Авито
+    # отбивают запросы с зарубежного IP и просят выключить VPN.
+    "DirectSites": [
+        "geosite:ru",
+        "geosite:private",
+        "geosite:category-gov-ru",
+        "geosite:category-banks-ru",
+        "geosite:category-public-tracker",
+    ],
+    "DirectIp": ["geoip:ru", "geoip:private"],
+    "ProxySites": [],
+    "ProxyIp": [],
+    "BlockSites": [],
+    "BlockIp": [],
+    "DomainStrategy": "IPIfNonMatch",
+    "FakeDNS": "false",
+    "LastUpdated": HAPP_RU_BYPASS_LASTUPDATED,
+}
+
+
+def _happ_routing_deeplink():
+    """Возвращает happ://routing/onadd/<base64> для активации Russia bypass
+    профиля при импорте подписки. См. https://happ.mintlify.app/technical-docs/routing"""
+    payload = json.dumps(HAPP_RU_BYPASS_PROFILE, ensure_ascii=False, separators=(",", ":"))
+    b64 = base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
+    return f"happ://routing/onadd/{b64}"
+
+
+def _set_happ_routing(resp):
+    """Ставит header `routing` с deeplink-ом Russia bypass профиля.
+    Happ Plus при импорте/обновлении подписки автоматически добавляет и
+    активирует этот профиль (русские сервисы идут direct, остальное через VPN)."""
+    resp.headers["routing"] = _happ_routing_deeplink()
+
+
 @app.route("/sub-xray/<filename>")
 def serve_subscription_xray(filename):
     """Xray-core JSON config — для Happ Plus / V2RayN / Streisand.
@@ -3461,6 +3521,7 @@ def serve_subscription_xray(filename):
         ui_fields.append(f"expire={expire_ts}")
     resp.headers["Subscription-Userinfo"] = "; ".join(ui_fields)
     _set_happ_announce(resp, expire_ts, is_unlimited)
+    _set_happ_routing(resp)
     return resp
 
 
@@ -3492,6 +3553,7 @@ def serve_subscription_singbox(filename):
         ui_fields.append(f"expire={expire_ts}")
     resp.headers["Subscription-Userinfo"] = "; ".join(ui_fields)
     _set_happ_announce(resp, expire_ts, is_unlimited)
+    _set_happ_routing(resp)
     return resp
 
 ISSUE_LABELS = {
