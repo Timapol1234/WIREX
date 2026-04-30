@@ -3431,15 +3431,15 @@ def _set_happ_announce(resp, expire_ts, is_unlimited):
     resp.headers["announce"] = f"base64:{b64}"
 
 
-# Bump на единицу когда меняется HAPP_RU_BYPASS_PROFILE — Happ Plus обновляет
-# уже импортированный профиль, только если LastUpdated в пришедшем JSON больше
+# Bump когда меняется HAPP_RU_BYPASS_PROFILE — Happ Plus обновляет уже
+# импортированный профиль, только если LastUpdated в пришедшем JSON больше
 # того, что у него локально (https://happ.mintlify.app/technical-docs/routing).
-HAPP_RU_BYPASS_LASTUPDATED = 1745366400  # 2026-04-23 UTC
+HAPP_RU_BYPASS_LASTUPDATED = 1745452800  # 2026-04-24 UTC (bump 2 — gefiles fix)
 
 HAPP_RU_BYPASS_PROFILE = {
     "Name": "WIREX Russia",
     # GlobalProxy=true → дефолтное правило "всё через прокси", DirectSites/Ip
-    # выводят за этот забор только то, что нужно (РФ-сайты и приватные сети).
+    # выводят за этот забор только то, что нужно (РФ-сервисы и приватные сети).
     "GlobalProxy": "true",
     # DNS для трафика, идущего через VPN: Cloudflare (через туннель доходит).
     "RemoteDNSType": "DoH",
@@ -3449,24 +3449,30 @@ HAPP_RU_BYPASS_PROFILE = {
     "DomesticDNSType": "DoH",
     "DomesticDNSDomain": "https://common.dns.yandex.net/dns-query",
     "DomesticDNSIP": "77.88.8.8",
-    "Geoipurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
-    "Geositeurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+    # geo-базы от runetfreedom — специально для РФ-сценария (банки/госуслуги
+    # direct, РКН-заблокированные через VPN). У Loyalsoldier этих категорий нет
+    # (он китайский), и Happ ругался "geosite.dat: отсутствует секция RU".
+    "Geoipurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat",
+    "Geositeurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat",
     "DnsHosts": {
         "cloudflare-dns.com": "1.1.1.1",
         "common.dns.yandex.net": "77.88.8.8",
     },
-    # Эти домены/IP идут НАПРЯМУЮ, не через VPN — иначе банки/госуслуги/Авито
-    # отбивают запросы с зарубежного IP и просят выключить VPN.
+    # Direct: домены доступные ТОЛЬКО изнутри РФ (банки, госуслуги, Авито,
+    # маркетплейсы) и российские whitelist-IP — иначе они отбивают запросы
+    # с зарубежного IP и просят выключить VPN.
     "DirectSites": [
-        "geosite:ru",
+        "geosite:ru-available-only-inside",
         "geosite:private",
-        "geosite:category-gov-ru",
-        "geosite:category-banks-ru",
-        "geosite:category-public-tracker",
     ],
-    "DirectIp": ["geoip:ru", "geoip:private"],
-    "ProxySites": [],
-    "ProxyIp": [],
+    "DirectIp": [
+        "geoip:ru-whitelist",
+        "geoip:private",
+    ],
+    # Явно через VPN — РКН-заблокированные. С GlobalProxy=true оно и так через
+    # прокси, но явное правило поднимает приоритет над любыми DirectSites/Ip.
+    "ProxySites": ["geosite:ru-blocked"],
+    "ProxyIp": ["geoip:ru-blocked"],
     "BlockSites": [],
     "BlockIp": [],
     "DomainStrategy": "IPIfNonMatch",
