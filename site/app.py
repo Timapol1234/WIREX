@@ -1591,16 +1591,32 @@ def _ensure_user_on_all_servers(owner):
 
 
 def build_user_subscription_3mode(owner):
-    """Возвращает base64-encoded список из 3 vless URL — Auto/LTE/Backup —
-    каждый указывает на РАЗНЫЙ физический сервер, иначе Happ дедуплицирует.
-    UUID owner-а должен быть зарегестрирован на всех (через _ensure_user_on_all_servers).
-    Описание и контакт поддержки уходят в Profile-Title (см. _profile_meta_for_user)."""
+    """Возвращает base64-encoded список vless URL — 3 реальных entries
+    (Auto/LTE/Backup на РАЗНЫХ серверах) + 3 информационных dummy entries
+    с описанием/сроком/поддержкой. UUID owner-а должен быть зарегестрирован
+    на всех (через _ensure_user_on_all_servers).
+
+    Реальные entries идут первыми, чтобы Happ Plus по умолчанию выбрал Auto.
+    Dummy entries указывают на 127.0.0.1:1 — Happ показывает их в списке,
+    но клиент не может через них коннектиться. Аналог "Информация выше ⬆️"
+    из Velvet VPN."""
     auto_key = pick_recommended_server()
     # LTE — другой сервер, не auto. Backup — третий, не auto и не lte.
     lte_key = pick_lte_server(exclude={auto_key} if auto_key else None) if auto_key else None
     backup_key = pick_backup_server(exclude={auto_key, lte_key} - {None})
 
     user_uuid = owner["uuid"]
+
+    _, expire_ts, is_unlimited = _profile_meta_for_user(owner)
+    if is_unlimited:
+        sub_line = "♾️ Безлимитный доступ"
+    elif expire_ts:
+        exp_dt = datetime.fromtimestamp(expire_ts)
+        days_left = max(0, (exp_dt - datetime.now()).days)
+        sub_line = f"⏳ Подписка до {exp_dt.strftime('%d.%m.%Y')} · {days_left} дн"
+    else:
+        sub_line = "⚠️ Подписка не активна"
+
     urls = []
     if auto_key:
         urls.append(build_vless_url(user_uuid, auto_key, name="WIREX Авто выбор | Самый быстрый"))
@@ -1608,8 +1624,15 @@ def build_user_subscription_3mode(owner):
         urls.append(build_vless_url(user_uuid, lte_key, name="WIREX LTE Обход"))
     if backup_key and backup_key not in (auto_key, lte_key):
         urls.append(build_vless_url(user_uuid, backup_key, name="WIREX Запасной"))
-    # Если серверов в SERVERS меньше 3, какие-то режимы могут совпадать —
-    # показываем только уникальные (Happ всё равно дедуплицирует одинаковые).
+
+    info_lines = [
+        "ℹ️ WIREX — Ваш защищённый доступ во все сервисы",
+        sub_line,
+        "🛟 Поддержка: t.me/wirex.support",
+    ]
+    for line in info_lines:
+        urls.append(_info_entry_url(user_uuid, line))
+
     return base64.b64encode("\n".join(urls).encode()).decode()
 
 
@@ -3376,11 +3399,11 @@ def serve_subscription(filename):
 
 
 def _profile_meta_for_user(user):
-    """Возвращает (title_text, expire_ts, is_unlimited). Title многострочный:
-    1-я строка — короткий бренд (свёрнутый вид Happ обрезает по ней),
-    последующие — описание + контакт поддержки + срок (читаются в раскрытой
-    инфо-карточке Happ Plus, как у Velvet VPN). Subscription-Userinfo expire=
-    отдаём отдельно — Happ показывает срок ещё и нативной плашкой."""
+    """Возвращает (title_text, expire_ts, is_unlimited). Title короткий —
+    Happ Plus обрезает заголовок и не рендерит многострочный вариант инфо-
+    карточкой. Описание/срок/поддержку отдаём через dummy-entries в списке
+    серверов (см. build_user_subscription_3mode), как у Velvet VPN."""
+    title_text = "WIREX - Encrypted Access"
     expire_ts = None
     is_unlimited = False
     sub = get_subscription((user.get("email") or "")) if user else None
@@ -3392,26 +3415,16 @@ def _profile_meta_for_user(user):
                 expire_ts = int(datetime.fromisoformat(sub["expires_at"]).timestamp())
             except Exception:
                 pass
-
-    if is_unlimited:
-        sub_line = "♾️ Безлимитный доступ"
-    elif expire_ts:
-        exp_dt = datetime.fromtimestamp(expire_ts)
-        days_left = max(0, (exp_dt - datetime.now()).days)
-        sub_line = f"⏳ Подписка до {exp_dt.strftime('%d.%m.%Y')} · {days_left} дн"
-    else:
-        sub_line = "⚠️ Подписка не активна"
-
-    lines = [
-        "WIREX - Encrypted Access",
-        "",
-        "🚀 WIREX — Ваш защищённый доступ во все сервисы",
-        "📡 Telegram, ChatGPT, Spotify, YouTube и другие",
-        sub_line,
-        "🛟 Поддержка: t.me/wirex.support",
-    ]
-    title_text = "\n".join(lines)
     return title_text, expire_ts, is_unlimited
+
+
+def _info_entry_url(user_uuid, name):
+    """Информационный VLESS-entry для подписки — указывает на 127.0.0.1:1
+    (порт закрыт, коннект невозможен). Happ Plus показывает в списке серверов,
+    но не использует его для трафика. Нужен чтобы вывести строки мета-инфы
+    (описание / срок / поддержку) под реальными ключами — аналог "Информация
+    выше ⬆️" у Velvet VPN."""
+    return f"vless://{user_uuid}@127.0.0.1:1?type=tcp&encryption=none#{quote(name)}"
 
 
 @app.route("/sub-xray/<filename>")
