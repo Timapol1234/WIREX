@@ -3433,51 +3433,76 @@ def _set_happ_announce(resp, expire_ts, is_unlimited):
 
 # Bump когда меняется HAPP_RU_BYPASS_PROFILE — Happ Plus обновляет уже
 # импортированный профиль, только если LastUpdated в пришедшем JSON больше
-# того, что у него локально (https://happ.mintlify.app/technical-docs/routing).
-HAPP_RU_BYPASS_LASTUPDATED = 1745452800  # 2026-04-24 UTC (bump 2 — gefiles fix)
+# того, что у него локально. Берём сильно больше, чем у RoscomVPN (1777529512),
+# чтобы наш профиль выиграл при коллизии. См. https://happ.mintlify.app/technical-docs/routing
+HAPP_RU_BYPASS_LASTUPDATED = 1800000000  # ≈2027-01
 
+# Базируется на проверенном конфиге RoscomVPN (DEFAULT.JSON):
+# https://github.com/hydraponique/roscomvpn-routing/blob/main/HAPP/DEFAULT.JSON
+# — у Loyalsoldier/runetfreedom нет нужных категорий типа geosite:category-ru,
+# а у RoscomVPN свои geo-базы под РФ-сценарий (jsdelivr CDN, pinned версии).
+# Wildberries / Ozon / Yandex Go идут через geosite:category-ru → direct,
+# YouTube / Telegram через geosite:youtube/telegram → proxy.
 HAPP_RU_BYPASS_PROFILE = {
     "Name": "WIREX Russia",
-    # GlobalProxy=true → дефолтное правило "всё через прокси", DirectSites/Ip
-    # выводят за этот забор только то, что нужно (РФ-сервисы и приватные сети).
     "GlobalProxy": "true",
-    # DNS для трафика, идущего через VPN: Cloudflare (через туннель доходит).
+    "UseChunkFiles": "true",
+    "RemoteDns": "8.8.8.8",
+    "DomesticDns": "77.88.8.8",
     "RemoteDNSType": "DoH",
-    "RemoteDNSDomain": "https://cloudflare-dns.com/dns-query",
-    "RemoteDNSIP": "1.1.1.1",
-    # DNS для direct (РФ) трафика: Yandex — в РФ работает надёжнее Google/Cloudflare.
+    "RemoteDNSDomain": "https://8.8.8.8/dns-query",
+    "RemoteDNSIP": "8.8.8.8",
     "DomesticDNSType": "DoH",
-    "DomesticDNSDomain": "https://common.dns.yandex.net/dns-query",
+    "DomesticDNSDomain": "https://77.88.8.8/dns-query",
     "DomesticDNSIP": "77.88.8.8",
-    # geo-базы от runetfreedom — специально для РФ-сценария (банки/госуслуги
-    # direct, РКН-заблокированные через VPN). У Loyalsoldier этих категорий нет
-    # (он китайский), и Happ ругался "geosite.dat: отсутствует секция RU".
-    "Geoipurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat",
-    "Geositeurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat",
+    "Geoipurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geoip@202604300611/release/geoip.dat",
+    "Geositeurl": "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geosite@202604152235/release/geosite.dat",
+    "LastUpdated": str(HAPP_RU_BYPASS_LASTUPDATED),
+    # Налоговая (lkfl2/lknpd.nalog.ru) часто ломается без явного DNS-override.
     "DnsHosts": {
-        "cloudflare-dns.com": "1.1.1.1",
-        "common.dns.yandex.net": "77.88.8.8",
+        "lkfl2.nalog.ru": "213.24.64.175",
+        "lknpd.nalog.ru": "213.24.64.181",
     },
-    # Direct: домены доступные ТОЛЬКО изнутри РФ (банки, госуслуги, Авито,
-    # маркетплейсы) и российские whitelist-IP — иначе они отбивают запросы
-    # с зарубежного IP и просят выключить VPN.
+    "RouteOrder": "block-proxy-direct",
+    # Direct: РФ-домены, whitelist + сервисы которые отбивают зарубежный IP
+    # (Microsoft Store, Apple, Steam, Epic, Riot, Twitch, Pinterest, Faceit).
     "DirectSites": [
-        "geosite:ru-available-only-inside",
         "geosite:private",
+        "geosite:category-ru",
+        "geosite:whitelist",
+        "geosite:microsoft",
+        "geosite:apple",
+        "geosite:epicgames",
+        "geosite:riot",
+        "geosite:escapefromtarkov",
+        "geosite:steam",
+        "geosite:twitch",
+        "geosite:pinterest",
+        "geosite:faceit",
     ],
     "DirectIp": [
-        "geoip:ru-whitelist",
         "geoip:private",
+        "geoip:direct",
     ],
-    # Явно через VPN — РКН-заблокированные. С GlobalProxy=true оно и так через
-    # прокси, но явное правило поднимает приоритет над любыми DirectSites/Ip.
-    "ProxySites": ["geosite:ru-blocked"],
-    "ProxyIp": ["geoip:ru-blocked"],
-    "BlockSites": [],
+    # Явно через VPN — заблокированное в РФ (даже если домен под другие правила
+    # подпадает, эти переопределяют благодаря RouteOrder).
+    "ProxySites": [
+        "geosite:google-play",
+        "geosite:github",
+        "geosite:twitch-ads",
+        "geosite:youtube",
+        "geosite:telegram",
+    ],
+    "ProxyIp": [],
+    # Bonus — реклама / торренты / Windows телеметрия блокируются.
+    "BlockSites": [
+        "geosite:win-spy",
+        "geosite:torrent",
+        "geosite:category-ads",
+    ],
     "BlockIp": [],
     "DomainStrategy": "IPIfNonMatch",
     "FakeDNS": "false",
-    "LastUpdated": HAPP_RU_BYPASS_LASTUPDATED,
 }
 
 
