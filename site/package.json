@@ -1,0 +1,15 @@
+{
+  "name": "wirex-site",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Tailwind build for WIREX site (index.html + admin.html). Replaces blocked-in-RU cdn.tailwindcss.com runtime CDN with a precompiled CSS file.",
+  "scripts": {
+    "build": "tailwindcss -i ./build/input.css -o ./static/tw.css --minify",
+    "watch": "tailwindcss -i ./build/input.css -o ./static/tw.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.9",
+    "tailwindcss": "^3.4.17"
+  }
+}

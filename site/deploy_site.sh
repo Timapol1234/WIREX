@@ -27,6 +27,7 @@ chmod +x "$APP_DIR/install_hysteria.sh" "$APP_DIR/install_xray.sh" "$APP_DIR/bac
 mkdir -p "$APP_DIR/static"
 cp "$DEPLOY_DIR/site/index.html"          "$APP_DIR/static/index.html"
 cp "$DEPLOY_DIR/site/admin.html"          "$APP_DIR/static/admin.html"
+cp "$DEPLOY_DIR/site/static/tw.css"       "$APP_DIR/static/tw.css"
 
 echo ""
 echo ">>> 2b. Ставлю cron на ежедневный бэкап (04:00)"

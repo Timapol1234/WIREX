@@ -20,3 +20,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Tailwind build
+site/node_modules/
+site/package-lock.json
