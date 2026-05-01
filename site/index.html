@@ -1749,7 +1749,22 @@ async function redeemPromo() {
             msg.className = 'text-xs mt-2 text-primary';
             msg.classList.remove('hidden');
             showToast('Промокод активирован', 'success');
-            setTimeout(() => { closePaymentModal(); loadMyKeys(); }, 1500);
+            input.value = '';
+            // Обновляем подписку, не закрывая модалку — юзер остаётся на вкладке
+            // продления и видит обновлённый chip в шапке.
+            try {
+                const subRes = await fetch(`${API_URL}/api/subscription/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: sessionToken })
+                });
+                if (subRes.ok) {
+                    const subData = await subRes.json();
+                    currentSub = subData.subscription || null;
+                    pendingRequest = subData.pending_request || null;
+                    updateSubStatusChip();
+                }
+            } catch (_) { /* не критично — юзер увидит обновлённый статус при следующем переходе */ }
         } else {
             msg.textContent = data.error || 'Ошибка';
             msg.className = 'text-xs mt-2 text-error';
