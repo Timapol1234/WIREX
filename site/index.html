@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
 <title>WIREX — Encrypted access</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=4">
-<link rel="apple-touch-icon" href="/static/favicon.svg?v=4">
+<link rel="icon" type="image/svg+xml" sizes="16x16" href="/static/logo-16.svg?v=5">
+<link rel="icon" type="image/svg+xml" sizes="32x32" href="/static/logo-32.svg?v=5">
+<link rel="icon" type="image/svg+xml" sizes="any" href="/static/logo-64.svg?v=5">
+<link rel="apple-touch-icon" sizes="64x64" href="/static/logo-64.svg?v=5">
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
@@ -128,25 +130,39 @@
             background-attachment: fixed;
             position: relative;
         }
-        /* Тёмная виньетка-оверлей: верх/низ затемняются для глубины,
-           центр остаётся чистым. pointer-events:none — клики проходят насквозь. */
-        body::before {
+        /* Чёрные волны — горизонтальные синусоиды с очень слабой светлой обводкой,
+           создают глубину поверх grid-фона. Под виньеткой, чтобы виньетка
+           ослабляла их по краям. */
+        body::after {
             content: '';
             position: fixed;
             inset: 0;
             pointer-events: none;
             z-index: 0;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 240' preserveAspectRatio='none'><path d='M0,60 Q150,20 300,60 T600,60' stroke='rgba(245,245,245,0.045)' stroke-width='1.2' fill='none'/><path d='M0,110 Q150,70 300,110 T600,110' stroke='rgba(245,245,245,0.035)' stroke-width='1' fill='none'/><path d='M0,160 Q150,120 300,160 T600,160' stroke='rgba(245,245,245,0.028)' stroke-width='1' fill='none'/><path d='M0,210 Q150,170 300,210 T600,210' stroke='rgba(245,245,245,0.022)' stroke-width='1' fill='none'/></svg>");
+            background-repeat: repeat;
+            background-size: 600px 240px;
+        }
+        /* Тёмная виньетка-оверлей: верх/низ затемняются для глубины,
+           центр остаётся чистым. pointer-events:none — клики проходят насквозь.
+           Идёт ПОСЛЕ ::after в render order, поэтому виньетка поверх волн. */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
             background:
                 radial-gradient(ellipse 120% 60% at 50% 0%,   rgba(0,0,0,0.55) 0%, transparent 55%),
                 radial-gradient(ellipse 120% 60% at 50% 100%, rgba(0,0,0,0.65) 0%, transparent 55%),
                 radial-gradient(ellipse 70%  100% at 0%   50%, rgba(0,0,0,0.35) 0%, transparent 60%),
                 radial-gradient(ellipse 70%  100% at 100% 50%, rgba(0,0,0,0.35) 0%, transparent 60%);
         }
-        /* Контент рендерим над оверлеем — modal/fixed-блоки с собственным z-index
+        /* Контент рендерим над оверлеями — modal/fixed-блоки с собственным z-index
            (z-50 у Tailwind) их специфичность выше, останутся как были. */
         body > main, body > header, body > footer, body > section, body > nav {
             position: relative;
-            z-index: 1;
+            z-index: 2;
         }
         .font-headline { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
         .font-mono     { font-family: 'JetBrains Mono', ui-monospace, monospace; }
