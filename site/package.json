@@ -5,7 +5,8 @@
   "description": "Tailwind build for WIREX site (index.html + admin.html). Replaces blocked-in-RU cdn.tailwindcss.com runtime CDN with a precompiled CSS file.",
   "scripts": {
     "build": "tailwindcss -i ./build/input.css -o ./static/tw.css --minify",
-    "watch": "tailwindcss -i ./build/input.css -o ./static/tw.css --watch"
+    "watch": "tailwindcss -i ./build/input.css -o ./static/tw.css --watch",
+    "vercel-build": "npm run build && rm -rf public && mkdir -p public && cp index.html admin.html public/ && cp -r static public/static"
   },
   "devDependencies": {
     "@tailwindcss/container-queries": "^0.1.1",

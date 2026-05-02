@@ -24,3 +24,4 @@ Thumbs.db
 # Tailwind build
 site/node_modules/
 site/package-lock.json
+site/public/
